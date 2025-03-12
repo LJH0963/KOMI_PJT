@@ -5,6 +5,12 @@ KOMI : Kinetic Optimization for Medical Innovation
 <a href = "https://www.notion.so/Project-3-LLM-1b31d7badadc803da28eecca9b52bd3b?pvs=4"> Team1_notion
 </a>
 
+
+### git clone
+```
+$ git clone https://github.com/LJH0963/KOMI_PJT.git
+```
+
 ### 자주쓰는 git 명령어
 
 ```
