@@ -35,7 +35,7 @@ if not image_paths:
 for image_path in image_paths:
     # 원본 이미지 파일 이름 가져오기
     image_name = os.path.basename(image_path).split(".")[0]  # 확장자 제거
-    output_path = os.path.join(output_dir, f"{image_name}_mask.png")  # 저장 경로 설정
+    output_path = os.path.join(output_dir, f"{image_name}_mask.jpg")  # 저장 경로 설정
 
     print(f"▶ 처리 중: {image_path} → {output_path}")
 
