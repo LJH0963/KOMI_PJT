@@ -103,4 +103,4 @@ def home():
     return {"message": "안녕하세요! 포즈 감지 API 입니다!"}
 
 
-# uvicorn service.main:app --reload
+# uvicorn service.main:app --host 0.0.0.0 --port 8001 --reload
