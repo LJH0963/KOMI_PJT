@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from typing import List
 from datetime import datetime
 from ultralytics import YOLO
+import json
 
 app = FastAPI()
 
@@ -20,6 +21,13 @@ model = YOLO("./yolov8n-pose.pt")
 
 # 🔹 웹캠 실행 상태 플래그
 webcam_running = False
+
+current_index = 0
+index_lock = threading.Lock()
+mock_data_path = "./II_service/data/json_modified.json"
+with open(mock_data_path, "r", encoding="utf-8") as file:
+    mock_data = json.load(file)
+data_length = len(mock_data)
 
 # 📌 Pydantic 데이터 모델 정의
 class Keypoint(BaseModel):
@@ -36,6 +44,13 @@ class PoseResponse(BaseModel):
     status: str
     pose: List[PersonPose]
     timestamp: str
+    
+class PoseResponseMock(BaseModel):
+    status: str
+    pose: List[PersonPose]
+    timestamp: str
+    image_id: str
+
 
 # 📌 웹캠 프로세스 실행 함수 (스레드 실행)
 def capture_webcam():
@@ -122,6 +137,32 @@ async def get_sample_pose():
     )
     return sample_data
 
+
+# 📌 1-2. Mock 데이터 반환 API (1/30초 간격, 순차적 반환)
+@pose_router.get("/mock", response_model=PoseResponseMock)
+def get_mock_pose():
+    """
+    📌 1/30초마다 데이터를 순차적으로 변경하여 반환하는 API
+    - 1초에 30개의 데이터가 변경됨 (1프레임 = 1/30초)
+    - 총 139개의 데이터가 반복 재생됨
+    """
+    # 🔹 현재 시간을 밀리초 단위로 변환 후 30프레임으로 나누어 인덱스 계산
+    current_time_ms = int(datetime.utcnow().timestamp() * 1000)  # UTC timestamp (밀리초)
+    frame_index = (current_time_ms // (1000 // 30)) % data_length  # 🔹 30FPS 기준 인덱스 계산
+
+    # 선택된 데이터 가져오기
+    mock_tmp = mock_data[frame_index]
+    # print(mock_tmp)
+    # 📌 응답 생성
+    response = PoseResponseMock(
+        status="success",
+        timestamp=datetime.utcnow().isoformat(),
+        pose=mock_tmp["pose"],  # pose 데이터 포함
+        image_id=mock_tmp.get("image_id", "unknown.jpg")  # 🔹 이미지 파일명 포함
+    )
+
+    return response
+    
 # 📌 2. 웹캠 감지 시작 API
 @pose_router.post("/start-webcam")
 async def start_webcam():
