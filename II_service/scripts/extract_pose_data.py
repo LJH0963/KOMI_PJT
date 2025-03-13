@@ -24,7 +24,7 @@ image_files = [f"jeonsomi{i}.jpg" for i in range(1, 388)]  # jeonsomi1.jpg ~ jeo
 for image_name in tqdm(image_files, desc="Processing images"):
     image_path = os.path.join(image_dir, image_name)
     image = cv2.imread(image_path)
-    # image = cv2.resize(image, (720, 1280))
+    image = cv2.resize(image, (640, 480))
 
     if image is None:
         print(f"❌ Error: Cannot load image {image_name}")
