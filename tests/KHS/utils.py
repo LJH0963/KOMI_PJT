@@ -1,5 +1,6 @@
 from ultralytics import YOLO
 from datetime import datetime
+import os
 import cv2
 import sys
 
@@ -14,7 +15,40 @@ class PoseEstimator(YOLO):
         self.vcap = cv2.VideoCapture(src)
         if not self.vcap.isOpened():
             raise ConnectionError("❌ 웹캠 연결 실패")
+        self.fps = int(self.vcap.get(cv2.CAP_PROP_FPS))
     
+    def mock_data_create(self):
+        video_path = "./tests/KSG/data/medium_video.mp4"
+        vcap = cv2.VideoCapture(video_path)
+        
+        if not vcap.isOpened():
+            print("비디오 파일 오류", file=sys.stderr)
+            sys.exit()
+
+        self.output_dir = "./tests/KHS/mock"
+        os.makedirs(self.output_dir, exist_ok=True)
+
+        frame_idx = 0  # 외부에서 초기화
+        while vcap.isOpened():
+            ret, frame = vcap.read()
+            if not ret: break
+
+            frame = cv2.flip(frame, 1)
+            
+            # 키포인트 처리 로직 (원본 유지)
+            
+            if frame_idx % 24 == 0:
+                save_path = os.path.join(self.output_dir, f"frame_{frame_idx}.jpg")
+                cv2.imwrite(save_path, frame)
+
+            cv2.imshow("YOLO Pose Estimation", frame)
+            frame_idx += 1  # 정상적인 카운팅
+
+            if cv2.waitKey(1) == 27: break
+
+        vcap.release()
+        cv2.destroyAllWindows()
+
     def image_detect_pose(self):
         """공통 포즈 감지 메서드"""
         vcap = cv2.VideoCapture(0)
