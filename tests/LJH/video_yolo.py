@@ -6,7 +6,7 @@ import sys
 import cv2
 
 # 라우터 설정
-video_yolo_router = APIRouter(prefix='/video_yolo', tags=['Video YOLO'])
+# video_yolo_router = APIRouter(prefix='/video_yolo', tags=['Video YOLO'])
 
 
 # 모델 불러오기
@@ -15,10 +15,6 @@ model = YOLO("./tests/KHS/models/yolov8n-pose.pt")
 
 # Webcam에서 Frame 캡처하기
 vcap = cv2.VideoCapture(0)  # 0번 카메라 (기본 웹캠) 연결
-
-# 웹캠 해상도 설정 (width=720, height=1280)
-vcap.set(cv2.CAP_PROP_FRAME_WIDTH, 720)  # 너비 설정
-vcap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1280)  # 높이 설정
 
 # 웹캠 정상 작동 확인
 if not vcap.isOpened():
