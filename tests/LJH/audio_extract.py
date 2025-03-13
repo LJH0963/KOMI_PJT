@@ -35,4 +35,4 @@ def download_audio(video_url: str):
 
     return audio_path                               # 다운로드된 파일 경로 반환
 
-download_audio('https://youtube.com/shorts/IM-FgpU4-yI?si=MCT4TTfCepPGPOdf')
+download_audio('https://youtu.be/9FRVCN_5ATc?si=BnN4qeiJ1SIWpMrT')
