@@ -1,13 +1,16 @@
 from utils import PoseEstimator
 from fastapi import APIRouter
+from ultralytics import YOLO
 import sys
 import cv2
 
 # 라우터 설정
 video_yolo_router = APIRouter(prefix='/video_yolo', tags=['Video YOLO'])
 
+
 # 모델 불러오기
-model = PoseEstimator("./tests/KHS/models/yolov8n-pose.pt")
+# model = PoseEstimator("./tests/KHS/models/yolov8n-pose.pt")
+model = YOLO("./tests/KHS/models/yolov8n-pose.pt")
 
 # Webcam에서 Frame 캡처하기
 vcap = cv2.VideoCapture(0)  # 0번 카메라 (기본 웹캠) 연결
