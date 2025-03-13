@@ -6,7 +6,7 @@ import sys
 import cv2
 
 # 라우터 설정
-video_yolo_router = APIRouter(prefix='/video_yolo', tags=['Video YOLO'])
+# video_yolo_router = APIRouter(prefix='/video_yolo', tags=['Video YOLO'])
 
 
 # 모델 불러오기
