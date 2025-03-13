@@ -23,6 +23,13 @@ if not vcap.isOpened():
 
 # 웹캠에서 프레임 읽기
 while vcap.isOpened():
+
+    # 웹캠 사이즈 및 해상도 설정
+    vcap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
+    vcap.set(cv2.CAP_PROP_FRAME_WIDTH, 1080)                        # 3을 'cv2.CAP_PROP_FRAME_WIDTH'로 변경해도 됨
+    vcap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)                        # 4를 'cv2.CAP_PROP_FRAME_HEIGHT'로 변경해도 됨
+    vcap.set(cv2.CAP_PROP_FPS, 30)                                  # 5를 'cv2.CAP_PROP_FPS'로 변경해도 됨
+
     # 1. 프레임 읽기기
     ret, frame = vcap.read()            # ret: 작동 여부, # frame: 카메라로 받은 이미지
 
