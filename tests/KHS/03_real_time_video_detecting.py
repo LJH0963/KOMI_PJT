@@ -7,4 +7,4 @@ model = PoseEstimator("./tests/KHS/models/yolo11n-pose.pt")
 model.start_camera(src=0)
 
 # 실시간 Pose 데이터 수집하기
-model.real_time_detect_video()
+model.real_time_video_detecting()
