@@ -7,18 +7,26 @@ import sys
 class PoseEstimator(YOLO):
     def __init__(self, model_path):
         super().__init__(model_path)
-        """YOLO를 상속받는 class 생성"""
+        """
+        YOLO를 상속받는 class 생성
+        """
         self.vcap = None
+        self.output_folder = "./tests/KHS/mock"
 
     def start_camera(self, src=0):
-        """웹캠 초기화 메서드"""
+        """
+        웹캠 초기화 메서드
+        """
         self.vcap = cv2.VideoCapture(src)
         if not self.vcap.isOpened():
             raise ConnectionError("❌ 웹캠 연결 실패")
         self.fps = int(self.vcap.get(cv2.CAP_PROP_FPS))
     
-    def mock_data_create(self, input_video: str, fps: int):
-        video_path = f"./tests/KSG/data/{input_video}.mp4"
+    def video_image_extraction(self, input_video: str, fps: int):
+        """
+        비디오를 설정 된 프레임 단위로 캡처하여 저장하는 메서드
+        """
+        video_path = f"./tests/KHS/video_data/{input_video}.mp4"
         vcap = cv2.VideoCapture(video_path)
         
         if not vcap.isOpened():
@@ -47,31 +55,87 @@ class PoseEstimator(YOLO):
         vcap.release()
         cv2.destroyAllWindows()
 
-    def image_detect_pose(self):
-        """공통 포즈 감지 메서드"""
-        vcap = cv2.VideoCapture(0)
+    # def image_detect_pose(self):
+    #     """
+    #     공통 포즈 감지 메서드
+    #     """
+    #     vcap = cv2.VideoCapture(0)
 
-        vcap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
-        vcap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        vcap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        vcap.set(cv2.CAP_PROP_FPS, 30)
+    #     vcap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+    #     vcap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    #     vcap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    #     vcap.set(cv2.CAP_PROP_FPS, 30)
 
-        if not self.vcap.isOpened():
-            print("웹캠 오류", file=sys.stderr)
-            sys.exit()
+    #     if not self.vcap.isOpened():
+    #         print("웹캠 오류", file=sys.stderr)
+    #         sys.exit()
 
-        # 웹캠 실시간 처리 루프
-        while self.vcap.isOpened():
-            ret, frame = self.vcap.read()            # ret: 작동 여부, # frame: 카메라로 받은 이미지
+    #     # 웹캠 실시간 처리 루프
+    #     while self.vcap.isOpened():
+    #         ret, frame = self.vcap.read()            # ret: 작동 여부, # frame: 카메라로 받은 이미지
 
-            # 웹캠 오류 체크
-            if not ret:
-                print("웹캠 프레임을 가져올 수 없습니다.")
-                break
+    #         # 웹캠 오류 체크
+    #         if not ret:
+    #             print("웹캠 프레임을 가져올 수 없습니다.")
+    #             break
             
-            # 좌우 반전 (True)
-            frame = cv2.flip(frame, 1)
+    #         # 좌우 반전 (True)
+    #         frame = cv2.flip(frame, 1)
 
+    #         # 모델 활용하여 이미지 감지
+    #         results = self.predict(frame)
+        
+    #         for result in results:
+    #             keypoints = result.keypoints.xy.cpu().numpy()       # Keypoints (x, y) 좌표 값 추출
+    #             scores = result.keypoints.conf.cpu().numpy()        # 신뢰도 값 추출
+    #             pose_data = []
+    #             keypoints_list = []
+    #             for i, (kp, score) in enumerate(zip(keypoints[0], scores[0])):
+    #                 if score > 0.5:                                 # 신뢰도 50% 이상일 때
+    #                     keypoints_list.append({
+    #                         "id": i,
+    #                         "x": int(kp[0]),
+    #                         "y": int(kp[1]),
+    #                         "confidence": float(score)
+    #                     })
+    #                     cv2.circle(frame, (int(kp[0]), int(kp[1])), 5, (0,255,0), -1)   # Keypoints 시각화
+    #             pose_data.append({
+    #                 "person_id": 1,
+    #                 "keypoints": keypoints_list
+    #             })
+        
+    #         cv2.imwrite("./tests/KHS/data/captured_image.jpg", frame)
+
+    #         # 감지된 결과 화면 출력
+    #         cv2.imshow("YOLO Pose Estimation", frame)
+
+    #         # 꺼지는 조건 설정
+    #         key = cv2.waitKey(1)
+
+    #         # ESC : 27 (아스키코드)
+    #         if key == 27:
+    #             break
+
+    #     # 웹캠 종료 및 창 닫기
+    #     vcap.release()
+    #     cv2.destroyAllWindows()
+
+    #     return pose_data, frame
+    
+    def capture_image_detecting(self):
+        """
+        저장된 이미지에서 사람을 디텍딩하여 관절 Keypoints를 추출하는 메서드
+        """
+        image_list = [f for f in os.listdir(self.output_folder) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+
+        for image in image_list:
+            image_path = os.path.join(self.output_folder, image)
+            frame = cv2.imread(image_path)
+
+            if frame is None:
+                print(f"이미지를 불러올 수 없습니다: {image}")
+                continue
+            
             # 모델 활용하여 이미지 감지
             results = self.predict(frame)
         
@@ -94,27 +158,15 @@ class PoseEstimator(YOLO):
                     "keypoints": keypoints_list
                 })
         
-            cv2.imwrite("./tests/KHS/data/captured_image.jpg", frame)
-
-            # 감지된 결과 화면 출력
-            cv2.imshow("YOLO Pose Estimation", frame)
-
-            # 꺼지는 조건 설정
-            key = cv2.waitKey(1)
-
-            # ESC : 27 (아스키코드)
-            if key == 27:
-                break
-
-        # 웹캠 종료 및 창 닫기
-        vcap.release()
-        cv2.destroyAllWindows()
+            cv2.imwrite(f"./tests/KHS/capture_image_keypoints/{image}.jpg", frame)
 
         return pose_data, frame
     
 
-    def real_time_detect_video(self):
-        """비디오 처리 전용 메서드"""
+    def real_time_video_detecting(self):
+        """
+        웹캠을 이용하여 실시간으로 디텍팅 된 사람의 Keypoints를 저장하는 메서드
+        """
         vcap = cv2.VideoCapture(0)
 
         vcap.set(cv2.CAP_PROP_AUTOFOCUS, 0)

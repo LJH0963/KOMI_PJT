@@ -108,7 +108,7 @@ pose_router = APIRouter(prefix="/pose", tags=["pose"])
 # 📌 1. 샘플 포즈 데이터 반환 API
 @pose_router.get("/sample", response_model=PoseResponse)
 async def get_sample_pose():
-    """ 샘플 포즈 데이터를 반환하는 API """
+    """ 📌 샘플 포즈 데이터를 반환하는 API """
     sample_data = PoseResponse(
         status="success",
         pose=[{
@@ -166,7 +166,7 @@ def get_mock_pose():
 # 📌 2. 웹캠 감지 시작 API
 @pose_router.post("/start-webcam")
 async def start_webcam():
-    """ 웹캠 감지를 백그라운드에서 실행하는 API """
+    """📌 웹캠 감지를 백그라운드에서 실행하는 API """
     global webcam_running
 
     if webcam_running:
@@ -179,7 +179,7 @@ async def start_webcam():
 # 📌 3. 웹캠 감지 중지 API
 @pose_router.post("/stop-webcam")
 async def stop_webcam():
-    """ 실행 중인 웹캠 감지를 중지하는 API """
+    """📌 실행 중인 웹캠 감지를 중지하는 API """
     global webcam_running
     webcam_running = False
     return {"message": "웹캠 감지가 중지되었습니다."}
@@ -187,7 +187,7 @@ async def stop_webcam():
 # 📌 4. 실시간 포즈 데이터 반환 API
 @pose_router.get("/live", response_model=PoseResponse)
 async def get_live_pose():
-    """ 가장 최신의 포즈 데이터를 반환하는 API """
+    """📌 가장 최신의 포즈 데이터를 반환하는 API """
     with pose_data_lock:
         return latest_pose_data
 
