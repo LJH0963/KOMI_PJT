@@ -6,23 +6,31 @@ import cv2
 import os
 from datetime import datetime
 from tqdm import tqdm  # 진행 상황 표시용
+import glob
+import json
 
 # 📌 1. YOLO-Pose 모델 로드
 model = YOLO("yolov8n-pose.pt")  # YOLO-Pose 경량 모델
 
 # 📌 2. 이미지가 저장된 디렉토리 경로 설정
-image_dir = "data/jeonsomi/"
-output_csv = "data/jeonsomi_pose_data.csv"
+# image_dir = "data/jeonsomi/"
+# output_csv = "data/jeonsomi_pose_data.csv"
+image_dir = "data/solo_dance/"
+output_csv = "data/solo_dance_pose_data.csv"
+output_json = "data/solo_dance_pose_data.json"
 
 # 📌 3. 저장할 데이터를 담을 리스트
 pose_data_list = []
 
-# 📌 4. 디렉토리 내 이미지 파일 리스트 가져오기
-image_files = [f"jeonsomi{i}.jpg" for i in range(1, 388)]  # jeonsomi1.jpg ~ jeonsomi387.jpg
+# # 📌 4. 디렉토리 내 이미지 파일 리스트 가져오기
+# image_files = [f"jeonsomi{i}.jpg" for i in range(1, 388)]  # jeonsomi1.jpg ~ jeonsomi387.jpg
+image_files = sorted(glob.glob(os.path.join(image_dir, "*.jpg")))
+
 
 # 📌 5. 이미지별로 포즈 감지 수행
 for image_name in tqdm(image_files, desc="Processing images"):
-    image_path = os.path.join(image_dir, image_name)
+    # image_path = os.path.join(image_dir, image_name)
+    image_path = image_name
     image = cv2.imread(image_path)
     image = cv2.resize(image, (640, 480))
 
@@ -34,8 +42,16 @@ for image_name in tqdm(image_files, desc="Processing images"):
     results = model(image)
 
     for person_id, result in enumerate(results):
-        keypoints = result.keypoints.xy.cpu().numpy()  # 🟢 GPU → CPU 변환
-        scores = result.keypoints.conf.cpu().numpy()  # 🟢 신뢰도 값도 CPU 변환
+        if result.keypoints is None or result.keypoints.xy is None:
+            print(f"⚠ 경고: 포즈를 감지하지 못함 - {image_name}")
+            continue  # 다음 이미지 처리
+
+        keypoints = result.keypoints.xy.cpu().numpy() if result.keypoints.xy is not None else None
+        scores = result.keypoints.conf.cpu().numpy() if result.keypoints.conf is not None else None
+
+        if keypoints is None or scores is None:
+            print(f"⚠ 경고: 키포인트 데이터가 존재하지 않음 - {image_name}")
+            continue
 
         # 📌 6. 좌표 데이터 정리
         for i, (kp, score) in enumerate(zip(keypoints[0], scores[0])):  
