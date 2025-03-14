@@ -4,4 +4,4 @@ from utils import PoseEstimator
 model = PoseEstimator("./tests/KHS/models/yolo11n-pose.pt")
 
 # 실시간 Pose 데이터 수집하기
-model.video_image_extraction("big_video_640_480", 10)
+model.video_image_extraction("mediun_video_640_480", 8)
