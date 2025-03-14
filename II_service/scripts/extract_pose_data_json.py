@@ -12,8 +12,8 @@ from ultralytics import YOLO
 model = YOLO("yolov8n-pose.pt")  # YOLO-Pose 경량 모델
 
 # 📌 2. 이미지가 저장된 디렉토리 경로 설정
-image_dir = "data/solo_dance/"
-output_json = "data/solo_dance_pose_data.json"  # 🔹 JSON 저장 경로
+image_dir = "data/solo_dance2/"
+output_json = "data/solo_dance2_pose_data.json"  # 🔹 JSON 저장 경로
 
 # 📌 3. 저장할 데이터를 담을 리스트
 pose_data_list = []
