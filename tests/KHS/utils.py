@@ -17,8 +17,8 @@ class PoseEstimator(YOLO):
             raise ConnectionError("❌ 웹캠 연결 실패")
         self.fps = int(self.vcap.get(cv2.CAP_PROP_FPS))
     
-    def mock_data_create(self):
-        video_path = "./tests/KSG/data/medium_video.mp4"
+    def mock_data_create(self, input_video: str, fps: int):
+        video_path = f"./tests/KSG/data/{input_video}.mp4"
         vcap = cv2.VideoCapture(video_path)
         
         if not vcap.isOpened():
@@ -32,12 +32,10 @@ class PoseEstimator(YOLO):
         while vcap.isOpened():
             ret, frame = vcap.read()
             if not ret: break
-
-            frame = cv2.flip(frame, 1)
-            
+         
             # 키포인트 처리 로직 (원본 유지)
             
-            if frame_idx % 24 == 0:
+            if frame_idx % fps == 0:
                 save_path = os.path.join(self.output_dir, f"frame_{frame_idx}.jpg")
                 cv2.imwrite(save_path, frame)
 

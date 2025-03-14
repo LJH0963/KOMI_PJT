@@ -4,4 +4,4 @@ from utils import PoseEstimator
 model = PoseEstimator("./tests/KHS/models/yolov8n-pose.pt")
 
 # 실시간 Pose 데이터 수집하기
-model.mock_data_create()
+model.mock_data_create("big_video", 30)
