@@ -35,4 +35,4 @@ def download_audio(video_url: str):
 
     return audio_path                               # 다운로드된 파일 경로 반환
 
-download_audio('https://youtu.be/9FRVCN_5ATc?si=BnN4qeiJ1SIWpMrT')
+download_audio(r"C:\Wanted\02_ProjectCollections\KOMI_PJT\tests\KHS\video_data\New_video.mp4")
