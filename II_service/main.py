@@ -75,6 +75,11 @@ def capture_webcam():
         # 감지된 포즈 데이터 저장
         pose_data = []
         for result in results:
+            # 📌 None 체크 추가 (포즈 감지 실패 시 스킵)
+            if result.keypoints is None or result.keypoints.xy is None or result.keypoints.conf is None:
+                print("⚠ 경고: 포즈를 감지하지 못함 (keypoints 없음)")
+                continue
+
             keypoints = result.keypoints.xy.cpu().numpy()
             scores = result.keypoints.conf.cpu().numpy()
 
@@ -83,6 +88,7 @@ def capture_webcam():
                 for i, (kp, score) in enumerate(zip(keypoints[0], scores[0])) if score > 0.5
             ]
             pose_data.append({"person_id": 1, "keypoints": keypoints_list})
+
 
         # 🔹 최신 포즈 데이터 갱신
         with pose_data_lock:
