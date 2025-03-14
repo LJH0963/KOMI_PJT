@@ -36,7 +36,8 @@ if not image_paths:
     print("⚠ 경고: 해당 디렉토리에 JPG 파일이 없습니다!")
 
 # 📌 모든 이미지에 대해 반복 처리
-for image_path in image_paths[:3]:  # 예제: 처음 3개 이미지 처리
+# for image_path in image_paths[:3]:  # 예제: 처음 3개 이미지 처리
+for image_path in image_paths:
     # 원본 이미지 파일 이름 가져오기
     image_name = os.path.basename(image_path).split(".")[0]  # 확장자 제거
     output_path = os.path.join(output_dir, f"{image_name}_mask.jpg")  # 마스크 저장 경로
@@ -49,12 +50,18 @@ for image_path in image_paths[:3]:  # 예제: 처음 3개 이미지 처리
     if image is None:
         print(f"❌ 오류: {image_path} 를 불러올 수 없습니다.")
         continue
+    image = cv2.resize(image, (640, 480))  # resize 진행
 
     # 📌 객체 검출 수행
     results = model.predict(source=image, conf=0.6)
 
     # 📌 검출된 경계 상자 추출
     bboxes = results[0].boxes.xyxy.cpu().numpy()
+    
+    # YOLO가 감지한 박스가 없으면 건너뜀
+    if len(bboxes) == 0:
+        print(f"❌ 객체 감지 실패: {image_name}, 건너뜁니다.")
+        continue
 
     # 📌 이미지 RGB로 변환
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
