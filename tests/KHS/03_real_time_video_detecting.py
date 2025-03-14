@@ -1,7 +1,7 @@
 from utils import PoseEstimator
 
 # 모델 불러오기
-model = PoseEstimator("./tests/KHS/models/yolo11n-pose.pt")
+model = PoseEstimator("./tests/KHS/models/yolov8n-pose.pt")
 
 # 웹캠 시작하기
 model.start_camera(src=0)

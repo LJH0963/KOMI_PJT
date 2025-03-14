@@ -11,7 +11,7 @@ class PoseEstimator(YOLO):
         YOLO를 상속받는 class 생성
         """
         self.vcap = None
-        self.output_folder = "./tests/KHS/mock"
+        self.output_folder = "./tests/KHS/video_extraction_image"
 
     def start_camera(self, src=0):
         """
@@ -33,7 +33,7 @@ class PoseEstimator(YOLO):
             print("비디오 파일 오류", file=sys.stderr)
             sys.exit()
 
-        self.output_dir = "./tests/KHS/mock"
+        self.output_dir = "./tests/KHS/video_extraction_image"
         os.makedirs(self.output_dir, exist_ok=True)
 
         frame_idx = 0  # 외부에서 초기화
@@ -47,7 +47,7 @@ class PoseEstimator(YOLO):
                 save_path = os.path.join(self.output_dir, f"frame_{frame_idx}.jpg")
                 cv2.imwrite(save_path, frame)
 
-            cv2.imshow("YOLO Pose Estimation", frame)
+            cv2.imshow("Videio Image Extraction", frame)
             frame_idx += 1  # 정상적인 카운팅
 
             if cv2.waitKey(1) == 27: break
@@ -55,77 +55,15 @@ class PoseEstimator(YOLO):
         vcap.release()
         cv2.destroyAllWindows()
 
-    # def image_detect_pose(self):
-    #     """
-    #     공통 포즈 감지 메서드
-    #     """
-    #     vcap = cv2.VideoCapture(0)
+        return None
 
-    #     vcap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
-    #     vcap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    #     vcap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    #     vcap.set(cv2.CAP_PROP_FPS, 30)
-
-    #     if not self.vcap.isOpened():
-    #         print("웹캠 오류", file=sys.stderr)
-    #         sys.exit()
-
-    #     # 웹캠 실시간 처리 루프
-    #     while self.vcap.isOpened():
-    #         ret, frame = self.vcap.read()            # ret: 작동 여부, # frame: 카메라로 받은 이미지
-
-    #         # 웹캠 오류 체크
-    #         if not ret:
-    #             print("웹캠 프레임을 가져올 수 없습니다.")
-    #             break
-            
-    #         # 좌우 반전 (True)
-    #         frame = cv2.flip(frame, 1)
-
-    #         # 모델 활용하여 이미지 감지
-    #         results = self.predict(frame)
         
-    #         for result in results:
-    #             keypoints = result.keypoints.xy.cpu().numpy()       # Keypoints (x, y) 좌표 값 추출
-    #             scores = result.keypoints.conf.cpu().numpy()        # 신뢰도 값 추출
-    #             pose_data = []
-    #             keypoints_list = []
-    #             for i, (kp, score) in enumerate(zip(keypoints[0], scores[0])):
-    #                 if score > 0.5:                                 # 신뢰도 50% 이상일 때
-    #                     keypoints_list.append({
-    #                         "id": i,
-    #                         "x": int(kp[0]),
-    #                         "y": int(kp[1]),
-    #                         "confidence": float(score)
-    #                     })
-    #                     cv2.circle(frame, (int(kp[0]), int(kp[1])), 5, (0,255,0), -1)   # Keypoints 시각화
-    #             pose_data.append({
-    #                 "person_id": 1,
-    #                 "keypoints": keypoints_list
-    #             })
-        
-    #         cv2.imwrite("./tests/KHS/data/captured_image.jpg", frame)
-
-    #         # 감지된 결과 화면 출력
-    #         cv2.imshow("YOLO Pose Estimation", frame)
-
-    #         # 꺼지는 조건 설정
-    #         key = cv2.waitKey(1)
-
-    #         # ESC : 27 (아스키코드)
-    #         if key == 27:
-    #             break
-
-    #     # 웹캠 종료 및 창 닫기
-    #     vcap.release()
-    #     cv2.destroyAllWindows()
-
-    #     return pose_data, frame
-    
     def capture_image_detecting(self):
         """
         저장된 이미지에서 사람을 디텍딩하여 관절 Keypoints를 추출하는 메서드
         """
+        pose_data = []
+        keypoints_list = []
         image_list = [f for f in os.listdir(self.output_folder) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
 
         for image in image_list:
@@ -142,8 +80,6 @@ class PoseEstimator(YOLO):
             for result in results:
                 keypoints = result.keypoints.xy.cpu().numpy()       # Keypoints (x, y) 좌표 값 추출
                 scores = result.keypoints.conf.cpu().numpy()        # 신뢰도 값 추출
-                pose_data = []
-                keypoints_list = []
                 for i, (kp, score) in enumerate(zip(keypoints[0], scores[0])):
                     if score > 0.5:                                 # 신뢰도 50% 이상일 때
                         keypoints_list.append({
@@ -158,7 +94,7 @@ class PoseEstimator(YOLO):
                     "keypoints": keypoints_list
                 })
         
-            cv2.imwrite(f"./tests/KHS/capture_image_keypoints/{image}.jpg", frame)
+            cv2.imwrite(f"./tests/KHS/video_image_keypoints_save/{image}.jpg", frame)
 
         return pose_data, frame
     

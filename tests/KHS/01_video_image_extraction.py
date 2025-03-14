@@ -1,7 +1,7 @@
 from utils import PoseEstimator
 
 # 모델 불러오기
-model = PoseEstimator("./tests/KHS/models/yolo11n-pose.pt")
+model = PoseEstimator("./tests/KHS/models/yolov8n-pose.pt")
 
 # 실시간 Pose 데이터 수집하기
-model.video_image_extraction("mediun_video_640_480", 8)
+model.video_image_extraction("Jenny_solo(640, 480)", 24)
