@@ -8,9 +8,9 @@ from ultralytics import YOLO
 from segment_anything import sam_model_registry, SamPredictor
 
 # 📌 입력 및 출력 디렉토리 설정
-input_dir = "data/solo_dance"  # 입력 이미지 폴더
-output_dir = "data/solo_dance_sam"  # 세그멘테이션 결과 이미지 저장 폴더
-csv_output_dir = "data/solo_dance_csv"  # CSV 저장 폴더
+input_dir = "data/solo_dance2"  # 입력 이미지 폴더
+output_dir = "data/solo_dance2_sam"  # 세그멘테이션 결과 이미지 저장 폴더
+csv_output_dir = "data/solo_dance2_csv"  # CSV 저장 폴더
 
 os.makedirs(output_dir, exist_ok=True)  # 출력 이미지 폴더 생성
 os.makedirs(csv_output_dir, exist_ok=True)  # CSV 저장 폴더 생성
