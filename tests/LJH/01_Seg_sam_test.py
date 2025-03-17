@@ -42,7 +42,7 @@ for image_path in image_paths:
     # 이미지 로드
     image = cv2.imread(image_path)
     if image is None:
-        print(f"❌ 오류: {image_path} 를 불러올 수 없습니다.")
+        print(f"오류: {image_path} 를 불러올 수 없습니다.")
         continue
 
     # 객체 검출 수행
@@ -78,4 +78,4 @@ for image_path in image_paths:
     cv2.imwrite(output_path, segmentation_result)
     print(f"✅ 저장 완료: {output_path}")
 
-print("🎉 모든 이미지 처리 완료!")
+print("모든 이미지 처리 완료!")
