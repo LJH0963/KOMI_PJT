@@ -4,7 +4,7 @@ import torch
 from datetime import datetime
 import matplotlib.pyplot as plt
 
-image_path = "LJH/data/sample.jpg"
+image_path = ""
 
 from ultralytics import YOLO
 
