@@ -39,7 +39,7 @@ image_extensions = [".jpg", ".jpeg", ".png"]
 
 # 폴더 내의 모든 이미지 파일 찾기
 image_paths = []
-for root_dir, _, files in os.walk(image_path):       # 현재 경로 / 하위 폴더 리스트(사용 X)/ 폴더 내 모든 파일
+for root_dir, _, files in os.walk(image_folder):       # 현재 경로 / 하위 폴더 리스트(사용 X)/ 폴더 내 모든 파일
     for file in files:
         if file.lower().endswith(image_extensions):
             image_paths.append(os.path.join(root_dir, file))
