@@ -5,11 +5,10 @@ import tkinter as tk
 from tkinter import filedialog
 import pandas as pd
 import os
-from datetime import datetime
 from ultralytics import YOLO
 
 # TKinter의 GUI 숨기기
-root = tk.TK()
+root = tk.Tk()
 root.withdraw()
 
 # 이미지 폴더 먼저 선택
