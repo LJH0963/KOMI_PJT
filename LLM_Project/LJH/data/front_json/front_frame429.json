@@ -1,0 +1,119 @@
+{
+    "image_name": "frame429.jpg",
+    "bboxes": [
+        {
+            "class": 0,
+            "bbox": [
+                571,
+                103,
+                718,
+                577
+            ],
+            "confidence": 0.9147570729255676
+        }
+    ],
+    "keypoints": [
+        {
+            "part": "nose",
+            "x": 644,
+            "y": 145,
+            "confidence": 0.988923192024231
+        },
+        {
+            "part": "left_eye",
+            "x": 653,
+            "y": 137,
+            "confidence": 0.982996940612793
+        },
+        {
+            "part": "right_eye",
+            "x": 635,
+            "y": 137,
+            "confidence": 0.9887233972549438
+        },
+        {
+            "part": "left_ear",
+            "x": 666,
+            "y": 147,
+            "confidence": 0.781347393989563
+        },
+        {
+            "part": "right_ear",
+            "x": 621,
+            "y": 146,
+            "confidence": 0.9045740365982056
+        },
+        {
+            "part": "left_shoulder",
+            "x": 681,
+            "y": 200,
+            "confidence": 0.9980823993682861
+        },
+        {
+            "part": "right_shoulder",
+            "x": 603,
+            "y": 199,
+            "confidence": 0.9978334307670593
+        },
+        {
+            "part": "left_elbow",
+            "x": 704,
+            "y": 215,
+            "confidence": 0.9875394105911255
+        },
+        {
+            "part": "right_elbow",
+            "x": 588,
+            "y": 215,
+            "confidence": 0.9807868599891663
+        },
+        {
+            "part": "left_wrist",
+            "x": 669,
+            "y": 207,
+            "confidence": 0.9809067845344543
+        },
+        {
+            "part": "right_wrist",
+            "x": 626,
+            "y": 205,
+            "confidence": 0.9717491269111633
+        },
+        {
+            "part": "left_hip",
+            "x": 671,
+            "y": 337,
+            "confidence": 0.9991909861564636
+        },
+        {
+            "part": "right_hip",
+            "x": 616,
+            "y": 338,
+            "confidence": 0.9991397857666016
+        },
+        {
+            "part": "left_knee",
+            "x": 684,
+            "y": 439,
+            "confidence": 0.9989126920700073
+        },
+        {
+            "part": "right_knee",
+            "x": 604,
+            "y": 441,
+            "confidence": 0.9987371563911438
+        },
+        {
+            "part": "left_ankle",
+            "x": 697,
+            "y": 541,
+            "confidence": 0.9946487545967102
+        },
+        {
+            "part": "right_ankle",
+            "x": 592,
+            "y": 544,
+            "confidence": 0.9937067627906799
+        }
+    ]
+}
