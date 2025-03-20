@@ -82,12 +82,12 @@ for image_path in image_paths:
     results = yolo_model(image)
 
     # Json 파일 저장을 위한 빈 리스트 생성
-    json_data = {'image_name':image_name, 'keypoints':[]}
+    json_data = {'image_name':image_name, 'bbox':[], 'keypoints':[]}
 
     # 17개 부위 전부 초기화
     keypoints_dict = {part : {"x": None, "y": None, "confidence": 0.0} for part in COCO_KEYPOINTS}
 
-    # 관절(Keypoints) 좌표 추출 및 시각화
+    # 관절(Keypoints) 좌표 추출 및 시각화 & 추가 사항 Bbox 
     for result in results:
         keypoints = result.keypoints.xy.cpu().numpy()  # 좌표 변환
         scores = result.keypoints.conf.cpu().numpy()  # 신뢰도 변환
