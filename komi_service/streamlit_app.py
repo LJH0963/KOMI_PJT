@@ -12,34 +12,35 @@ import aiohttp
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import queue
+import collections
 
 # 서버 URL 설정
 API_URL = "http://localhost:8000"
 
 # 스레드 안전 데이터 구조
-image_queue = queue.Queue(maxsize=1)
+image_queues = {}  # 카메라별 이미지 큐
 is_running = True
-selected_camera = None
+selected_cameras = []
 
 # 스레드별 전용 세션과 이벤트 루프
 thread_local = threading.local()
 
 # 이미지 처리를 위한 스레드 풀
-thread_pool = ThreadPoolExecutor(max_workers=2)
+thread_pool = ThreadPoolExecutor(max_workers=4)  # 동시에 두 카메라 처리를 위해 4개로 증가
 
 # 세션 상태 초기화
-if 'selected_camera' not in st.session_state:
-    st.session_state.selected_camera = None
+if 'selected_cameras' not in st.session_state:
+    st.session_state.selected_cameras = []
 if 'cameras' not in st.session_state:
     st.session_state.cameras = []
 if 'server_status' not in st.session_state:
     st.session_state.server_status = None
-if 'last_image' not in st.session_state:
-    st.session_state.last_image = None
+if 'camera_images' not in st.session_state:
+    st.session_state.camera_images = {}
 if 'last_pose_data' not in st.session_state:
-    st.session_state.last_pose_data = None
+    st.session_state.last_pose_data = {}
 if 'image_update_time' not in st.session_state:
-    st.session_state.image_update_time = None
+    st.session_state.image_update_time = {}
 
 # Base64 이미지 디코딩 함수
 def decode_image(base64_image):
@@ -179,8 +180,11 @@ async def async_image_workflow(camera_id):
             try:
                 image = Image.open(img_bytes)
                 # 이미지 결과를 큐에 저장
-                if not image_queue.full():
-                    image_queue.put({
+                if camera_id not in image_queues:
+                    image_queues[camera_id] = queue.Queue(maxsize=1)
+                    
+                if not image_queues[camera_id].full():
+                    image_queues[camera_id].put({
                         "image": image,
                         "time": datetime.now()
                     })
@@ -198,8 +202,11 @@ async def async_image_workflow(camera_id):
             
             if image is not None:
                 # 이미지 결과를 큐에 저장
-                if not image_queue.full():
-                    image_queue.put({
+                if camera_id not in image_queues:
+                    image_queues[camera_id] = queue.Queue(maxsize=1)
+                    
+                if not image_queues[camera_id].full():
+                    image_queues[camera_id].put({
                         "image": image,
                         "pose_data": pose_data,
                         "time": datetime.now()
@@ -210,25 +217,33 @@ async def async_image_workflow(camera_id):
     
     return False
 
+# 여러 카메라의 이미지를 병렬로 처리
+async def process_multiple_cameras(camera_ids):
+    """여러 카메라의 이미지를 병렬로 처리"""
+    tasks = []
+    for camera_id in camera_ids:
+        if camera_id:
+            tasks.append(async_image_workflow(camera_id))
+    
+    if tasks:
+        await asyncio.gather(*tasks)
+
 # 비동기 이미지 업데이트 함수
-async def update_image():
+async def update_images():
     """백그라운드에서 이미지를 가져오는 함수"""
-    global selected_camera, is_running
+    global selected_cameras, is_running
     
     # 세션 초기화
     await init_session()
     
     try:
         while is_running:
-            # 전역 변수로 카메라 ID 확인
-            camera_id = selected_camera
+            # 전역 변수로 카메라 ID 목록 확인
+            camera_ids = selected_cameras
             
-            if camera_id:
-                # 이미지 데이터 요청 및 처리
-                success = await async_image_workflow(camera_id)
-                
-                if not success:
-                    await asyncio.sleep(0.5)  # 요청 실패 시 잠시 대기
+            if camera_ids:
+                # 모든 선택된 카메라 이미지 동시에 처리
+                await process_multiple_cameras(camera_ids)
             
             # 요청 간격 조절
             await asyncio.sleep(0.1)
@@ -249,7 +264,7 @@ def run_async_loop():
     
     try:
         # 이미지 업데이트 태스크 생성
-        task = loop.create_task(update_image())
+        task = loop.create_task(update_images())
         
         # 이벤트 루프 실행
         loop.run_until_complete(task)
@@ -269,7 +284,7 @@ def run_async_loop():
 
 # 메인 UI
 def main():
-    global selected_camera, is_running
+    global selected_cameras, is_running
     
     st.set_page_config(page_title="KOMI 모니터링", layout="wide")
     
@@ -297,29 +312,35 @@ def main():
             st.rerun()
         return
     
-    # 첫 번째 카메라 자동 선택
-    if not st.session_state.selected_camera and st.session_state.cameras:
-        st.session_state.selected_camera = st.session_state.cameras[0]
-        selected_camera = st.session_state.selected_camera
-    
-    # 카메라 선택기
+    # 카메라 다중 선택기
     if st.session_state.cameras:
-        camera_choice = st.selectbox(
-            "카메라 선택",
+        # 기본값 설정 (이전에 선택된 카메라 유지)
+        default_cameras = st.session_state.selected_cameras if st.session_state.selected_cameras else st.session_state.cameras[:min(2, len(st.session_state.cameras))]
+        
+        selected = st.multiselect(
+            "모니터링할 카메라 선택 (최대 2대)",
             st.session_state.cameras,
-            index=st.session_state.cameras.index(st.session_state.selected_camera) if st.session_state.selected_camera else 0
+            default=default_cameras,
+            max_selections=2
         )
         
-        if camera_choice != st.session_state.selected_camera:
-            st.session_state.selected_camera = camera_choice
-            selected_camera = camera_choice
+        if selected != st.session_state.selected_cameras:
+            st.session_state.selected_cameras = selected
+            selected_cameras = selected
     
-    # 이미지 표시 영역
-    image_slot = st.empty()
-    status_slot = st.empty()
-    
-    # 스트리밍 시작
-    status_slot.text("실시간 스트리밍 중...")
+    # 두 개의 열로 이미지 배치
+    if st.session_state.selected_cameras:
+        cols = st.columns(min(2, len(st.session_state.selected_cameras)))
+        image_slots = {}
+        status_slots = {}
+        
+        # 각 카메라별 이미지 슬롯 생성
+        for i, camera_id in enumerate(st.session_state.selected_cameras[:2]):  # 최대 2개
+            with cols[i]:
+                st.subheader(f"카메라 {i+1}: {camera_id}")
+                image_slots[camera_id] = st.empty()
+                status_slots[camera_id] = st.empty()
+                status_slots[camera_id].text("실시간 스트리밍 중...")
     
     # 별도 스레드 시작 (단 한번만)
     if 'thread_started' not in st.session_state:
@@ -330,31 +351,34 @@ def main():
     # 메인 UI 업데이트 루프
     try:
         while True:
-            # 이미지 큐에서 데이터 가져오기
-            try:
-                if not image_queue.empty():
-                    img_data = image_queue.get(block=False)
-                    st.session_state.last_image = img_data.get("image")
-                    st.session_state.last_pose_data = img_data.get("pose_data")
-                    st.session_state.image_update_time = img_data.get("time")
-            except queue.Empty:
-                pass
+            # 각 카메라별 이미지 큐에서 데이터 가져오기
+            for camera_id in st.session_state.selected_cameras[:2]:  # 최대 2개
+                if camera_id in image_queues and not image_queues[camera_id].empty():
+                    try:
+                        img_data = image_queues[camera_id].get(block=False)
+                        st.session_state.camera_images[camera_id] = img_data.get("image")
+                        st.session_state.last_pose_data[camera_id] = img_data.get("pose_data")
+                        st.session_state.image_update_time[camera_id] = img_data.get("time")
+                    except queue.Empty:
+                        pass
             
             # 이미지 업데이트
-            if st.session_state.last_image is not None:
-                image_slot.image(st.session_state.last_image, use_container_width=True)
-                
-                # 상태 업데이트
-                if st.session_state.image_update_time:
-                    status_time = st.session_state.image_update_time.strftime('%H:%M:%S')
-                    status_slot.text(f"업데이트: {status_time}")
-                
+            for camera_id in st.session_state.selected_cameras[:2]:  # 최대 2개
+                if camera_id in st.session_state.camera_images and st.session_state.camera_images[camera_id] is not None:
+                    if camera_id in image_slots:
+                        image_slots[camera_id].image(st.session_state.camera_images[camera_id], use_container_width=True)
+                    
+                    # 상태 업데이트
+                    if camera_id in st.session_state.image_update_time and camera_id in status_slots:
+                        status_time = st.session_state.image_update_time[camera_id].strftime('%H:%M:%S')
+                        status_slots[camera_id].text(f"업데이트: {status_time}")
+            
             # 전역 변수에 현재 선택된 카메라 ID 설정
-            selected_camera = st.session_state.selected_camera
+            selected_cameras = st.session_state.selected_cameras
                 
             time.sleep(0.1)  # UI 업데이트 간격
     except Exception as e:
-        status_slot.error(f"오류: {str(e)}")
+        st.error(f"오류: {str(e)}")
 
 if __name__ == "__main__":
     try:

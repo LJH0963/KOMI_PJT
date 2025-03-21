@@ -13,6 +13,7 @@ import os
 import logging
 from typing import Dict, Any, Optional, List, Set
 from collections import deque
+from contextlib import asynccontextmanager
 
 from komi_service.modules.pose_estimation import detect_pose, compare_poses, get_guide_pose
 
@@ -21,11 +22,44 @@ logging.basicConfig(level=logging.INFO,
                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# 이미지 버퍼 관리 (최적화를 위해 컬렉션 재정의)
+IMAGE_BUFFER_SIZE = 5
+image_buffers: Dict[str, deque] = {}
+latest_pose_data: Dict[str, Any] = {}
+processing_tasks: Set[asyncio.Task] = set()
+
+# lifespan 이벤트 컨텍스트 매니저
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 시작 시 실행
+    logging.info("서버 시작 중")
+    os.makedirs("uploads", exist_ok=True)
+    # 이미지 정리 백그라운드 작업 시작
+    cleanup_task = asyncio.create_task(cleanup_old_images())
+    
+    yield  # 앱 실행
+    
+    # 종료 시 실행
+    # 실행 중인 모든 작업 취소
+    for task in processing_tasks:
+        if not task.done():
+            task.cancel()
+    
+    # 정리 작업 취소
+    cleanup_task.cancel()
+    
+    # 작업이 완료될 때까지 대기
+    if processing_tasks:
+        await asyncio.gather(*processing_tasks, return_exceptions=True)
+    
+    logging.info("서버 종료")
+
 # FastAPI 앱 생성
 app = FastAPI(
     title="KOMI API",
     description="KOMI 서비스를 위한 API 서버",
-    version="0.1.0"
+    version="0.1.0",
+    lifespan=lifespan
 )
 
 # CORS 설정
@@ -36,12 +70,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# 이미지 버퍼 관리 (최적화를 위해 컬렉션 재정의)
-IMAGE_BUFFER_SIZE = 5
-image_buffers: Dict[str, deque] = {}
-latest_pose_data: Dict[str, Any] = {}
-processing_tasks: Set[asyncio.Task] = set()
 
 # 클라이언트 연결 정보 저장
 class ConnectionManager:
@@ -93,27 +121,6 @@ class ConnectionManager:
 # 카메라와 모니터 연결 관리자 생성
 camera_manager = ConnectionManager()
 monitor_manager = ConnectionManager()
-
-# 애플리케이션 이벤트 핸들러
-@app.on_event("startup")
-async def startup_event():
-    logging.info("서버 시작 중")
-    os.makedirs("uploads", exist_ok=True)
-    # 이미지 정리 백그라운드 작업 시작
-    asyncio.create_task(cleanup_old_images())
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    # 실행 중인 모든 작업 취소
-    for task in processing_tasks:
-        if not task.done():
-            task.cancel()
-    
-    # 작업이 완료될 때까지 대기
-    if processing_tasks:
-        await asyncio.gather(*processing_tasks, return_exceptions=True)
-    
-    logging.info("서버 종료")
 
 @app.get("/")
 async def root():
