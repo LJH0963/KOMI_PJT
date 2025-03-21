@@ -58,17 +58,7 @@ KOMI(Korean Open Metadata Initiative) 서비스는 포즈 감지 기술과 인�
 
 ### 1. FastAPI WebSocket 서버 실행
 
-#### 방법 1: 파이썬 모듈로 실행
-```bash
-python -m komi_service.fastapi_server
-```
-
 기본 설정: 호스트 0.0.0.0, 포트 8000
-
-##### 명령행 옵션
-```bash
-python -m komi_service.fastapi_server --host 127.0.0.1 --port 8080 --debug
-```
 
 | 옵션 | 설명 | 기본값 |
 |------|------|--------|
@@ -76,7 +66,6 @@ python -m komi_service.fastapi_server --host 127.0.0.1 --port 8080 --debug
 | `--port` | 서버 포트 번호 | 8000 |
 | `--debug` | 디버그 모드 활성화 | False |
 
-#### 방법 2: Uvicorn으로 직접 실행
 ```bash
 uvicorn komi_service.fastapi_server:app --host 0.0.0.0 --port 8000
 ```
@@ -224,3 +213,10 @@ KOMI 서비스는 FastAPI의 WebSocket을 활용한 비동기 통신 방식을 �
 ### 비동기 처리
 KOMI 서비스는 asyncio와 WebSocket을 활용한 비동기 처리를 통해 실시간 포즈 감지와 분석을 수행합니다. 이를 통해 여러 클라이언트의 동시 연결과 효율적인 리소스 관리가 가능합니다.
 
+
+#### 다중 카메라 테스트
+```
+uvicorn komi_service.fastapi_server:app --host 0.0.0.0 --port 8000
+streamlit run komi_service/streamlit_app.py -- --server_url http://192.168.10.87:8000
+python -m komi_service.webcam_client --server ws://192.168.10.87:8000/ws/camera
+```
