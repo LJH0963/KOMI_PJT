@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_SERVER_URL = "ws://localhost:8000/ws/camera"
 DEFAULT_CAMERA_INDEX = 0
 DEFAULT_FPS = 10  # 초당 프레임 수
-DEFAULT_RESOLUTION = (640, 480)  # 해상도
+DEFAULT_RESOLUTION = (320, 240)  # 해상도
 
 class WebcamClient:
     """웹캠 이미지를 캡처하여 WebSocket으로 전송하는 클라이언트"""
@@ -64,7 +64,7 @@ class WebcamClient:
         """WebSocket 연결 성공 시 호출"""
         print("서버에 연결되었습니다.")
         self.connected = True
-        self.client_id = data.get("camera_id")
+        self.client_id = None
         logger.info(f"카메라 ID: {self.client_id}")
     
     def _on_message(self, ws, message):
