@@ -87,8 +87,29 @@ for image_path in image_paths:
     # 17개 부위 전부 초기화
     keypoints_dict = {part : {"x": None, "y": None, "confidence": 0.0} for part in COCO_KEYPOINTS}
 
-    # 관절(Keypoints) 좌표 추출 및 시각화 & 추가 사항 Bbox 
+    # 관절(Keypoints) 좌표 추출 및 시각화 & 추가 사항: Bbox 정보 저장
+    ## Trouble shooting 3: Bbox 정보를 못 얻는다 생각했었으나, 계속 저장될 때 표시되는 해상도에서 힌트를 얻음 -> 표시하는 코드 추가
     for result in results:
+        # 박스 정보
+        if result.boxes is not None:
+            bboxes = result.boxes.xyxy.cpu().numpy
+            confs = result.boxes.conf.cpu().numpy
+            classes = result.boxes.cls.cpu().numpy
+
+            # json에 아예 저장 먼저
+            for bbox,conf,cls in zip(bboxes,confs,classes):
+                x1, y1, x2, y2 = map(int, bbox)        ## xmin, ymin, xmax, ymax
+                json_data['bboxes'].append({
+                    'class': int(cls),
+                    'bbox' : [x1, y1, x2, y2],
+                    'confidence' : float(conf)
+                })
+
+                # Bbox 시각화
+                cv2.rectangle(image, (x1, y1), (x2,y2), (255,0, 0), 2)
+                cv2.putText(image, f"conf: {conf:.2f}", (x1, y1, -10), cv2.FONT_HERSHEY_COMPLEX, 0.5, (255, 0, 0), 2)
+        
+        # Keypoint 정보
         keypoints = result.keypoints.xy.cpu().numpy()  # 좌표 변환
         scores = result.keypoints.conf.cpu().numpy()  # 신뢰도 변환
 
