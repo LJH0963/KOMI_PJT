@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 from datetime import datetime
-from .config import yolo_model  # YOLO 모델 로드
+from komi_service.modules.config import yolo_model  # YOLO 모델 로드
 
 def process_pose(image: np.ndarray):
     """
