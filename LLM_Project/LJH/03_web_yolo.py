@@ -1,121 +1,160 @@
-from ultralytics import YOLO
-from datetime import datetime
-import os
 import cv2
-import sys
-import json
+import tkinter as tk
+from tkinter import filedialog
+import os
 import time
+from ultralytics import YOLO
+import json
 
-class PoseEstimator(YOLO):
-    def __init__(self, model_path):
-        super().__init__(model_path)
-        self.vcap = None
-        self.output_folder = "C:/Users/user/Desktop/img_output/squat/web"
+# TKinter GUI 숨기기
+root = tk.Tk()
+root.withdraw()
 
-    def start_camera(self, src=0):
-        """
-        웹캠 초기화 메서드
-        """
-        self.vcap = cv2.VideoCapture(src)
-        if not self.vcap.isOpened():
-            raise ConnectionError("❌ 웹캘 연결 실패")
-        self.fps = int(self.vcap.get(cv2.CAP_PROP_FPS))
+# 결과 저장 폴더 선택
+output_folder = filedialog.askdirectory(title='결과 저장 폴더를 선택하세요')
+if not output_folder:
+    print("결과를 저장할 폴더를 선택하지 않았습니다. 프로그램을 종료합니다.")
+    exit()
 
-    def real_time_video_recording(self):
-        """
-        웹캘 실행 후 5초 후보호 2.9초 동안 30fps 기준으로 이미지 먼저 저장 + keypoint JSON 저장
-        """
-        save_duration_sec = 2.9
-        fps = 30
-        max_frames = int(save_duration_sec * fps)
+# 저장용 폴더 생성
+video_path = os.path.join(output_folder, 'recorded_video.avi')
+image_output_folder = os.path.join(output_folder, 'image')
+json_output_folder = os.path.join(output_folder, 'json')
+os.makedirs(image_output_folder, exist_ok=True)
+os.makedirs(json_output_folder, exist_ok=True)
 
-        output_img_dir = os.path.join(self.output_folder, 'images')
-        output_json_dir = os.path.join(self.output_folder, 'json')
-        os.makedirs(output_img_dir, exist_ok=True)
-        os.makedirs(output_json_dir, exist_ok=True)
+# 1단계: 웹캠 영상 저장 (1280x720, 실시간 녹화)
+cap = cv2.VideoCapture(0)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+cap.set(cv2.CAP_PROP_FPS, 30)
 
-        self.vcap = cv2.VideoCapture(0)
-        self.vcap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        self.vcap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        self.vcap.set(cv2.CAP_PROP_FPS, fps)
+# FPS 설정 확인
+actual_fps = cap.get(cv2.CAP_PROP_FPS)
+print(f"요청한 FPS: 30, 실제 적용된 FPS: {actual_fps}")
 
-        if not self.vcap.isOpened():
-            raise RuntimeError("웹캘을 열 수 없습니다.")
+fourcc = cv2.VideoWriter_fourcc(*'XVID')
+out = cv2.VideoWriter(video_path, fourcc, 30.0, (1280, 720))
 
-        print("웹캘이 실행되었습니다. 5초 후보호 저장을 시작합니다...")
-        start_time = time.time()
-        save_started = False
-        frame_count = 0
-        last_saved_time = None
+print("웹캠 실행 완료. 5초 후부터 2.9초간 영상만 저장합니다.")
 
-        while self.vcap.isOpened():
-            ret, frame = self.vcap.read()
-            if not ret:
-                print("프레임을 읽을 수 없습니다.")
-                break
-
-            current_time = time.time()
-            elapsed = current_time - start_time
-
-            if not save_started and elapsed > 5:
-                print("저장 시작!")
-                save_started = True
-                last_saved_time = current_time
-
-            if save_started and frame_count < max_frames:
-                if last_saved_time is None or (current_time - last_saved_time) >= 1 / fps:
-                    last_saved_time = current_time
-
-                    results = self.predict(frame)
-                    keypoints_data = []
-
-                    for result in results:
-                        keypoints = result.keypoints.xy.cpu().numpy()
-                        scores = result.keypoints.conf.cpu().numpy()
-                        person_kps = []
-
-                        for i, (kp, score) in enumerate(zip(keypoints[0], scores[0])):
-                            person_kps.append({
-                                "id": i,
-                                "x": int(kp[0]),
-                                "y": int(kp[1]),
-                                "confidence": float(score)
-                            })
-                            if score > 0.5:
-                                cv2.circle(frame, (int(kp[0]), int(kp[1])), 5, (0, 255, 0), -1)
-
-                        keypoints_data.append({
-                            "person_id": 1,
-                            "keypoints": person_kps
-                        })
-
-                    image_name = f"frame_{frame_count:04d}.jpg"
-                    json_name = f"frame_{frame_count:04d}.json"
-
-                    cv2.imwrite(os.path.join(output_img_dir, image_name), frame)
-
-                    result_json = {
-                        "status": "success",
-                        "pose": keypoints_data,
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                    with open(os.path.join(output_json_dir, json_name), 'w', encoding='utf-8') as f:
-                        json.dump(result_json, f, indent=4)
-
-                    print(f"{image_name}, {json_name} 저장 완료")
-                    frame_count += 1
-
-            if save_started and frame_count >= max_frames:
-                print("2.9초 동안 저장 완료. 종료합니다.")
-                break
-
-            cv2.imshow("YOLO Pose Estimation", frame)
-            if cv2.waitKey(1) == 27:
-                break
-
-        self.vcap.release()
+# 카운트다운 표시
+countdown_start = time.time()
+while time.time() - countdown_start < 5:
+    remaining = 5 - int(time.time() - countdown_start)
+    ret, frame = cap.read()
+    if not ret:
+        break
+    countdown_text = str(remaining)
+    cv2.putText(frame, countdown_text, (600, 380), cv2.FONT_HERSHEY_SIMPLEX, 5, (0, 0, 255), 10)
+    cv2.imshow('Recording Video', frame)
+    if cv2.waitKey(1) == 27:
+        cap.release()
         cv2.destroyAllWindows()
+        exit()
 
-if __name__ == "__main__":
-    pose_estimator = PoseEstimator("yolo11x-pose.pt")
-    pose_estimator.real_time_video_recording()
+# 본격적인 녹화 시작 (2.9초간)
+save_started = True
+record_start_time = time.time()
+
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    if time.time() - record_start_time <= 2.9:
+        out.write(frame)
+    else:
+        print("2.9초 녹화 완료. 영상 저장 종료.")
+        break
+
+    cv2.imshow('Recording Video', frame)
+    if cv2.waitKey(1) == 27:
+        break
+
+cap.release()
+out.release()
+cv2.destroyAllWindows()
+print(f"녹화 완료: {video_path}")
+
+# 2단계: 저장된 영상에서 정확히 87프레임 추출 (30fps * 2.9초)
+cap = cv2.VideoCapture(video_path)
+saved_idx = 0
+frame_count = 0
+
+while cap.isOpened() and frame_count < 87:
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    image_name = f"frame_{saved_idx:04d}.jpg"
+    output_image_path = os.path.join(image_output_folder, image_name)
+    cv2.imwrite(output_image_path, frame)
+    print(f"프레임 저장: {image_name}")
+
+    saved_idx += 1
+    frame_count += 1
+
+cap.release()
+cv2.destroyAllWindows()
+print("모든 프레임 추출 및 저장 완료.")
+
+# 3단계: 저장된 프레임에 대해 YOLO-Pose 적용 및 JSON 저장
+yolo_model = YOLO("yolo11x-pose.pt")
+COCO_KEYPOINTS = [
+    "nose", "left_eye", "right_eye", "left_ear", "right_ear",
+    "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
+    "left_wrist", "right_wrist", "left_hip", "right_hip",
+    "left_knee", "right_knee", "left_ankle", "right_ankle"
+]
+
+image_files = sorted([f for f in os.listdir(image_output_folder) if f.endswith('.jpg')])
+
+for image_file in image_files:
+    image_path = os.path.join(image_output_folder, image_file)
+    image = cv2.imread(image_path)
+    results = yolo_model(image)
+
+    json_data = {'image_name': image_file, 'bboxes': [], 'keypoints': []}
+    keypoints_dict = {part: {"x": None, "y": None, "confidence": 0.0} for part in COCO_KEYPOINTS}
+
+    for result in results:
+        if result.boxes is not None:
+            bboxes = result.boxes.xyxy.cpu().numpy()
+            confs = result.boxes.conf.cpu().numpy()
+            classes = result.boxes.cls.cpu().numpy()
+
+            for bbox, conf, cls in zip(bboxes, confs, classes):
+                x1, y1, x2, y2 = map(int, bbox)
+                json_data['bboxes'].append({
+                    'class': int(cls),
+                    'bbox': [x1, y1, x2, y2],
+                    'confidence': float(conf)
+                })
+
+        keypoints = result.keypoints.xy.cpu().numpy()
+        scores = result.keypoints.conf.cpu().numpy()
+
+        for idx, (kp, score) in enumerate(zip(keypoints[0], scores[0])):
+            x, y = int(kp[0]), int(kp[1])
+            conf = float(score)
+            keypoints_dict[COCO_KEYPOINTS[idx]] = {
+                'x': x if conf > 0.1 else None,
+                'y': y if conf > 0.1 else None,
+                "confidence": conf
+            }
+
+    json_data["keypoints"] = [
+        {
+            "part": part,
+            "x": keypoints_dict[part]["x"],
+            "y": keypoints_dict[part]["y"],
+            "confidence": keypoints_dict[part]["confidence"]
+        } for part in COCO_KEYPOINTS
+    ]
+
+    json_output_path = os.path.join(json_output_folder, image_file.replace('.jpg', '.json'))
+    with open(json_output_path, 'w', encoding='utf-8') as jf:
+        json.dump(json_data, jf, indent=4)
+
+    print(f"YOLO-Pose 완료 및 JSON 저장: {json_output_path}")
