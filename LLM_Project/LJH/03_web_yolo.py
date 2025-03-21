@@ -100,7 +100,7 @@ cv2.destroyAllWindows()
 print("모든 프레임 추출 및 저장 완료.")
 
 # 3단계: 저장된 프레임에 대해 YOLO-Pose 적용 및 JSON 저장
-yolo_model = YOLO("yolo11x-pose.pt")
+yolo_model = YOLO("yolo11n-pose.pt")
 COCO_KEYPOINTS = [
     "nose", "left_eye", "right_eye", "left_ear", "right_ear",
     "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
