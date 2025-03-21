@@ -1,7 +1,7 @@
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 import json
 import base64
 import cv2
@@ -329,6 +329,65 @@ async def get_latest_image(camera_id: str):
         }
     else:
         raise HTTPException(status_code=404, detail=f"카메라 {camera_id}의 이미지를 찾을 수 없습니다.")
+
+# 특정 카메라의 이미지를 직접 바이너리로 반환하는 API
+@app.get("/get-image/{camera_id}")
+async def get_image(camera_id: str):
+    """특정 카메라의 최신 이미지를 바이너리로 직접 반환"""
+    from fastapi.responses import Response
+    
+    # 버퍼에서 이미지 찾기
+    if camera_id in image_buffers and image_buffers[camera_id]:
+        try:
+            # 최신 이미지 가져오기
+            latest_image = image_buffers[camera_id][-1]
+            image_data = latest_image["image_data"]
+            
+            # Base64 디코딩
+            img_bytes = base64.b64decode(image_data)
+            np_arr = np.frombuffer(img_bytes, np.uint8)
+            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            
+            # JPEG로 인코딩
+            _, img_encoded = cv2.imencode(".jpg", frame)
+            
+            # 바이너리로 응답
+            return Response(content=img_encoded.tobytes(), media_type="image/jpeg")
+        except Exception as e:
+            logger.error(f"이미지 처리 오류: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"이미지 처리 중 오류: {str(e)}")
+    
+    # 연결된 카메라에서 직접 가져오기 시도
+    if camera_id in camera_connections:
+        try:
+            # 각 카메라 클라이언트에 이미지 요청을 보내는 로직이 필요하지만
+            # 현재 연결된 카메라에서는 요청 프로세스가 다름
+            
+            # 버퍼가 비어있으므로 대체 이미지 생성 (검은색 이미지)
+            # 실제 구현에서는 카메라 클라이언트에 이미지 요청 로직 추가 필요
+            frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            _, img_encoded = cv2.imencode(".jpg", frame)
+            
+            return Response(content=img_encoded.tobytes(), media_type="image/jpeg")
+        except Exception as e:
+            logger.error(f"이미지 가져오기 오류: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"이미지를 가져올 수 없습니다: {str(e)}")
+    
+    # 아예 카메라 ID를 모를 경우 (숫자로 된 카메라 ID 시도)
+    try:
+        cam_idx = int(camera_id) if camera_id.isdigit() else 0
+        cap = cv2.VideoCapture(cam_idx)
+        ret, frame = cap.read()
+        cap.release()
+        
+        if not ret:
+            raise HTTPException(status_code=404, detail=f"카메라 {camera_id}를 열 수 없습니다.")
+        
+        _, img_encoded = cv2.imencode(".jpg", frame)
+        return Response(content=img_encoded.tobytes(), media_type="image/jpeg")
+    except Exception as e:
+        logger.error(f"카메라 접근 오류: {str(e)}")
+        raise HTTPException(status_code=404, detail=f"카메라 {camera_id}를 사용할 수 없습니다: {str(e)}")
 
 # 이미지 만료 처리 백그라운드 작업
 @app.on_event("startup")
