@@ -8,7 +8,7 @@ import time
 import numpy as np
 import cv2
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 from PIL import Image
 from io import BytesIO
 import asyncio
@@ -16,6 +16,7 @@ import aiohttp
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import queue
+import collections
 
 # 서버 URL 설정
 API_URL = "http://localhost:8000"  # 기본값
@@ -28,6 +29,11 @@ if 'server_url' in st.query_params:
 image_queues = {}  # 카메라별 이미지 큐
 is_running = True
 selected_cameras = []
+
+# 동기화 버퍼 설정
+sync_buffer = {}  # 카메라 ID -> 최근 프레임 버퍼 (collections.deque)
+SYNC_BUFFER_SIZE = 10  # 각 카메라별 버퍼 크기
+MAX_SYNC_DIFF_MS = 100  # 프레임 간 최대 허용 시간 차이 (밀리초)
 
 # 스레드별 전용 세션과 이벤트 루프
 thread_local = threading.local()
@@ -46,6 +52,8 @@ if 'camera_images' not in st.session_state:
     st.session_state.camera_images = {}
 if 'image_update_time' not in st.session_state:
     st.session_state.image_update_time = {}
+if 'sync_status' not in st.session_state:
+    st.session_state.sync_status = "준비 중..."
 
 # Base64 이미지 디코딩 함수
 def decode_image(base64_image):
@@ -167,6 +175,63 @@ def process_image_in_thread(image_data):
         print(f"이미지 처리 오류: {str(e)}")
         return None
 
+# 동기화 버퍼 초기화
+def init_sync_buffer(camera_ids):
+    """동기화 버퍼 초기화 함수"""
+    global sync_buffer
+    for camera_id in camera_ids:
+        if camera_id not in sync_buffer:
+            sync_buffer[camera_id] = collections.deque(maxlen=SYNC_BUFFER_SIZE)
+
+# 동기화된 프레임 쌍 찾기
+def find_synchronized_frames():
+    """여러 카메라에서 타임스탬프가 가장 가까운 프레임 쌍 찾기"""
+    global sync_buffer
+    
+    # 선택된 카메라가 2개 미만이면 동기화 필요 없음
+    if len(st.session_state.selected_cameras) < 2:
+        return None
+    
+    # 모든 카메라의 버퍼에 프레임이 있는지 확인
+    if not all(camera_id in sync_buffer and len(sync_buffer[camera_id]) > 0 
+               for camera_id in st.session_state.selected_cameras):
+        return None
+    
+    # 가장 최근의 타임스탬프 기준으로 시작
+    latest_frame_times = {
+        camera_id: max([frame["time"] for frame in sync_buffer[camera_id]])
+        for camera_id in st.session_state.selected_cameras
+    }
+    
+    # 가장 늦은 타임스탬프 찾기
+    reference_time = min(latest_frame_times.values())
+    
+    # 각 카메라에서 기준 시간과 가장 가까운 프레임 찾기
+    best_frames = {}
+    for camera_id in st.session_state.selected_cameras:
+        closest_frame = min(
+            [frame for frame in sync_buffer[camera_id]],
+            key=lambda x: abs((x["time"] - reference_time).total_seconds())
+        )
+        
+        # 시간 차이가 허용 범위 내인지 확인
+        time_diff_ms = abs((closest_frame["time"] - reference_time).total_seconds() * 1000)
+        if time_diff_ms <= MAX_SYNC_DIFF_MS:
+            best_frames[camera_id] = closest_frame
+        else:
+            # 시간 차이가 너무 크면 동기화 실패
+            return None
+    
+    # 모든 카메라에 대해 프레임을 찾았는지 확인
+    if len(best_frames) == len(st.session_state.selected_cameras):
+        # 동기화 상태 업데이트
+        max_diff = max([abs((f["time"] - reference_time).total_seconds() * 1000) 
+                        for f in best_frames.values()])
+        st.session_state.sync_status = f"동기화됨 (최대 차이: {max_diff:.1f}ms)"
+        return best_frames
+    
+    return None
+
 # 비동기 이미지 처리 워크플로우
 async def async_image_workflow(camera_id):
     """이미지 처리 전체 워크플로우"""
@@ -186,15 +251,23 @@ async def async_image_workflow(camera_id):
                 image = Image.open(img_bytes)
                 # 타임스탬프 추가
                 timestamp = datetime.now()
-                # 이미지 결과를 큐에 저장
+                
+                # 동기화 버퍼에 프레임 저장
+                frame_data = {
+                    "image": image,
+                    "time": timestamp
+                }
+                
+                if camera_id in sync_buffer:
+                    sync_buffer[camera_id].append(frame_data)
+                
+                # 이전 방식과의 호환성을 위해 이미지 큐에도 저장
                 if camera_id not in image_queues:
                     image_queues[camera_id] = queue.Queue(maxsize=1)
                     
                 if not image_queues[camera_id].full():
-                    image_queues[camera_id].put({
-                        "image": image,
-                        "time": timestamp
-                    })
+                    image_queues[camera_id].put(frame_data)
+                
                 return True
             except Exception as e:
                 print(f"이미지 처리 오류: {str(e)}")
@@ -210,15 +283,23 @@ async def async_image_workflow(camera_id):
             if image is not None:
                 # 타임스탬프 추가
                 timestamp = datetime.now()
-                # 이미지 결과를 큐에 저장
+                
+                # 동기화 버퍼에 프레임 저장
+                frame_data = {
+                    "image": image,
+                    "time": timestamp
+                }
+                
+                if camera_id in sync_buffer:
+                    sync_buffer[camera_id].append(frame_data)
+                
+                # 이전 방식과의 호환성을 위해 이미지 큐에도 저장
                 if camera_id not in image_queues:
                     image_queues[camera_id] = queue.Queue(maxsize=1)
                     
                 if not image_queues[camera_id].full():
-                    image_queues[camera_id].put({
-                        "image": image,
-                        "time": timestamp
-                    })
+                    image_queues[camera_id].put(frame_data)
+                    
                 return True
     except Exception as e:
         print(f"워크플로우 오류: {str(e)}")
@@ -250,6 +331,9 @@ async def update_images():
             camera_ids = selected_cameras
             
             if camera_ids:
+                # 동기화 버퍼 초기화
+                init_sync_buffer(camera_ids)
+                
                 # 모든 선택된 카메라 이미지 동시에 처리
                 await process_multiple_cameras(camera_ids)
             
@@ -333,6 +417,15 @@ def main():
         if selected != st.session_state.selected_cameras:
             st.session_state.selected_cameras = selected
             selected_cameras = selected
+            # 카메라 선택 변경 시 동기화 버퍼 초기화
+            init_sync_buffer(selected)
+    
+    # 동기화 설정
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.caption(f"동기화 상태: {st.session_state.sync_status}")
+    with col2:
+        use_sync = st.checkbox("동기화 활성화", value=True)
     
     # 두 개의 열로 이미지 배치
     if st.session_state.selected_cameras:
@@ -357,21 +450,38 @@ def main():
     # 메인 UI 업데이트 루프
     try:
         while True:
-            # 각 카메라별 이미지 큐에서 데이터 가져오기
-            for camera_id in st.session_state.selected_cameras[:2]:
-                if camera_id in image_queues and not image_queues[camera_id].empty():
-                    img_data = image_queues[camera_id].get(block=False)
-                    st.session_state.camera_images[camera_id] = img_data.get("image")
-                    st.session_state.image_update_time[camera_id] = img_data.get("time")
+            update_ui = False
+            
+            if use_sync and len(st.session_state.selected_cameras) > 1:
+                # 동기화된 프레임 찾기
+                sync_frames = find_synchronized_frames()
+                if sync_frames:
+                    # 동기화된 프레임이 있으면 UI 업데이트
+                    for camera_id, frame_data in sync_frames.items():
+                        st.session_state.camera_images[camera_id] = frame_data["image"]
+                        st.session_state.image_update_time[camera_id] = frame_data["time"]
+                    update_ui = True
+            else:
+                # 동기화 없이 각 카메라의 최신 프레임 사용
+                for camera_id in st.session_state.selected_cameras[:2]:
+                    if camera_id in image_queues and not image_queues[camera_id].empty():
+                        try:
+                            img_data = image_queues[camera_id].get(block=False)
+                            st.session_state.camera_images[camera_id] = img_data.get("image")
+                            st.session_state.image_update_time[camera_id] = img_data.get("time")
+                            update_ui = True
+                        except queue.Empty:
+                            pass
             
             # 이미지 업데이트
-            for camera_id in st.session_state.selected_cameras[:2]:
-                if camera_id in st.session_state.camera_images:
-                    image_slots[camera_id].image(st.session_state.camera_images[camera_id], use_container_width=True)
-                    status_time = st.session_state.image_update_time[camera_id].strftime('%H:%M:%S')
-                    status_slots[camera_id].text(f"업데이트: {status_time}")
+            if update_ui:
+                for camera_id in st.session_state.selected_cameras[:2]:
+                    if camera_id in st.session_state.camera_images:
+                        image_slots[camera_id].image(st.session_state.camera_images[camera_id], use_container_width=True)
+                        status_time = st.session_state.image_update_time[camera_id].strftime('%H:%M:%S.%f')[:-3]
+                        status_slots[camera_id].text(f"업데이트: {status_time}")
             
-            time.sleep(0.1)  # UI 업데이트 간격
+            time.sleep(0.05)  # UI 업데이트 간격 (더 빠른 응답성)
     except Exception as e:
         st.error(f"오류: {str(e)}")
 
