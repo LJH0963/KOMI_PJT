@@ -398,7 +398,7 @@ async def connect_to_camera_stream(camera_id):
             heartbeat=heartbeat,
             timeout=ws_timeout,
             max_msg_size=0,  # 무제한
-            compress=False  # 압축 비활성화로 성능 향상
+            compress=False  # 웹소켓 압축 비활성화로 성능 향상
         ) as ws:
             # 연결 성공 - 상태 업데이트 및 시도 횟수 초기화
             update_connection_status(camera_id, "connected")

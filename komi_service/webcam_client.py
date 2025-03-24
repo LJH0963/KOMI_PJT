@@ -129,8 +129,6 @@ def init_camera(
             return None
             
         # 설정 확인
-        actual_width = camera.get(cv2.CAP_PROP_FRAME_WIDTH)
-        actual_height = camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
         actual_fps = camera.get(cv2.CAP_PROP_FPS)
         
         print(f"카메라 {camera_index} 초기화 완료:")
@@ -230,7 +228,7 @@ async def connect_camera_websocket(camera_id, camera_info):
             timeout=ws_timeout, 
             heartbeat=heartbeat,
             max_msg_size=0,  # 무제한
-            compress=False  # 압축 비활성화로 성능 향상
+            compress=False  # 웹소켓 압축 비활성화로 성능 향상
         )
         
         # 카메라 등록 메시지 전송
@@ -330,7 +328,7 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640):
     
     # WebSocket 핑/퐁 타이머
     last_ping_time = time.time()
-    ping_interval = 25  # 25초마다 핑 전송
+    ping_interval = 5  # 5초마다 핑 전송
     
     # 재연결 관련 변수
     if camera_id not in reconnect_attempts:
@@ -490,8 +488,8 @@ def main():
                         help='이미지 압축 품질 (0-100, 기본값: 85)')
     parser.add_argument('--max-width', type=int, default=640,
                         help='이미지 최대 폭 (픽셀, 기본값: 640)')
-    parser.add_argument('--fps', type=int, default=20,
-                        help='카메라 프레임 레이트 (기본값: 20)')
+    parser.add_argument('--fps', type=int, default=15,
+                        help='카메라 프레임 레이트 (기본값: 15)')
     
     # 인자 파싱
     args = parser.parse_args()
