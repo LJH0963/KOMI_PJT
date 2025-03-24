@@ -8,7 +8,7 @@ import time
 import json
 import os
 import signal
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # 스레드별 전용 세션과 이벤트 루프
 thread_local = threading.local()
@@ -17,6 +17,65 @@ thread_local = threading.local()
 running = True
 cameras = {}
 api_url = "http://localhost:8000"
+server_time_offset = 0.0  # 서버와의 시간차 (초 단위)
+
+# 서버 시간 동기화 함수
+async def sync_server_time():
+    """서버 시간과 로컬 시간의 차이를 계산"""
+    global server_time_offset
+    try:
+        session = await init_session()
+        
+        # 시간 동기화를 위해 여러 번 요청하여 평균 계산
+        offsets = []
+        for _ in range(5):  # 5회 시도하여 평균 계산
+            local_time_before = time.time()
+            async with session.get(f"{api_url}/server_time", timeout=2) as response:
+                if response.status != 200:
+                    continue
+                    
+                local_time_after = time.time()
+                data = await response.json()
+                
+                # 서버 시간 파싱
+                server_timestamp = data.get("timestamp")
+                if not server_timestamp:
+                    continue
+                
+                # 네트워크 지연 시간 추정 (왕복 시간의 절반)
+                network_delay = (local_time_after - local_time_before) / 2
+                
+                # 보정된 서버 시간과 로컬 시간의 차이 계산
+                local_time_avg = local_time_before + network_delay
+                offset = server_timestamp - local_time_avg
+                
+                offsets.append(offset)
+                
+                # 반복 사이에 짧은 대기
+                await asyncio.sleep(0.1)
+                
+        if offsets:
+            # 이상치 제거 (최대, 최소값 제외)
+            if len(offsets) > 2:
+                offsets.remove(max(offsets))
+                offsets.remove(min(offsets))
+                
+            # 평균 오프셋 계산
+            server_time_offset = sum(offsets) / len(offsets)
+            print(f"서버 시간 동기화 완료: 오프셋 {server_time_offset:.3f}초")
+            return True
+        else:
+            print("서버 시간 동기화 실패: 유효한 응답 없음")
+            return False
+            
+    except Exception as e:
+        print(f"서버 시간 동기화 오류: {str(e)}")
+        return False
+
+# 서버 시간 기준 현재 시간 반환
+def get_server_time():
+    """서버 시간 기준의 현재 시간 계산"""
+    return datetime.now() + timedelta(seconds=server_time_offset)
 
 # 스레드별 세션 및 이벤트 루프 관리
 def get_session():
@@ -189,6 +248,9 @@ async def camera_loop(camera_id, camera):
         "fps": int(camera.get(cv2.CAP_PROP_FPS))
     }
     
+    # 서버 시간 동기화
+    await sync_server_time()
+    
     # 카메라 등록
     registration_success = await register_camera(camera_id, camera_info)
     if not registration_success:
@@ -198,8 +260,18 @@ async def camera_loop(camera_id, camera):
     last_upload_time = datetime.now()
     frame_interval = 1.0 / camera_info["fps"]  # 프레임 간 시간 간격
     
+    # 주기적 시간 동기화 설정
+    last_sync_time = time.time()
+    sync_interval = 60.0  # 60초마다 시간 동기화
+    
     try:
         while running:
+            # 주기적으로 서버 시간 동기화
+            current_time = time.time()
+            if current_time - last_sync_time >= sync_interval:
+                await sync_server_time()
+                last_sync_time = current_time
+            
             # 프레임 캡처
             ret, frame = camera.read()
             
@@ -218,8 +290,11 @@ async def camera_loop(camera_id, camera):
                 image_data = encode_image(frame)
                 
                 if image_data:
+                    # 서버 시간 기준으로 타임스탬프 생성
+                    server_timestamp = get_server_time()
+                    
                     # 이미지 업로드
-                    upload_success = await upload_image(camera_id, image_data, current_time)
+                    upload_success = await upload_image(camera_id, image_data, server_timestamp)
                     if upload_success:
                         last_upload_time = current_time
                     
@@ -277,6 +352,8 @@ def main():
                         help='카메라 설정 (형식: "카메라ID:인덱스,카메라ID:인덱스,...")')
     parser.add_argument('--server', type=str, default="http://localhost:8000",
                         help='서버 URL (기본값: http://localhost:8000)')
+    parser.add_argument('--sync-time', action='store_true',
+                        help='서버 시간과 동기화 활성화 (기본: 활성화)')
     
     # 인자 파싱
     args = parser.parse_args()

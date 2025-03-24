@@ -75,6 +75,15 @@ async def health_check():
         "uptime_formatted": str(uptime)
     }
 
+# 서버 시간 엔드포인트 추가
+@app.get("/server_time")
+async def get_server_time():
+    """서버의 현재 시간 정보 제공"""
+    return {
+        "server_time": datetime.now().isoformat(),
+        "timestamp": time.time()
+    }
+
 # 카메라 등록 엔드포인트
 @app.post("/register_camera")
 async def register_camera(data: dict):

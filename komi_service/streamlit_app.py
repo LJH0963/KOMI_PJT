@@ -30,6 +30,11 @@ image_queues = {}  # 카메라별 이미지 큐
 is_running = True
 selected_cameras = []
 
+# 서버 시간 동기화 관련 변수
+server_time_offset = 0.0  # 서버와의 시간차 (초 단위)
+last_time_sync = 0  # 마지막 시간 동기화 시간
+TIME_SYNC_INTERVAL = 60  # 시간 동기화 주기 (초)
+
 # 동기화 버퍼 설정
 sync_buffer = {}  # 카메라 ID -> 최근 프레임 버퍼 (collections.deque)
 SYNC_BUFFER_SIZE = 10  # 각 카메라별 버퍼 크기
@@ -232,6 +237,66 @@ def find_synchronized_frames():
     
     return None
 
+# 서버 시간 동기화 함수
+async def sync_server_time():
+    """서버 시간과 로컬 시간의 차이를 계산"""
+    global server_time_offset, last_time_sync
+    
+    try:
+        session = await init_session()
+        
+        # 시간 동기화를 위해 여러 번 요청하여 평균 계산
+        offsets = []
+        for _ in range(5):  # 5회 시도하여 평균 계산
+            local_time_before = time.time()
+            async with session.get(f"{API_URL}/server_time", timeout=2) as response:
+                if response.status != 200:
+                    continue
+                    
+                local_time_after = time.time()
+                data = await response.json()
+                
+                # 서버 시간 파싱
+                server_timestamp = data.get("timestamp")
+                if not server_timestamp:
+                    continue
+                
+                # 네트워크 지연 시간 추정 (왕복 시간의 절반)
+                network_delay = (local_time_after - local_time_before) / 2
+                
+                # 보정된 서버 시간과 로컬 시간의 차이 계산
+                local_time_avg = local_time_before + network_delay
+                offset = server_timestamp - local_time_avg
+                
+                offsets.append(offset)
+                
+                # 반복 사이에 짧은 대기
+                await asyncio.sleep(0.1)
+                
+        if offsets:
+            # 이상치 제거 (최대, 최소값 제외)
+            if len(offsets) > 2:
+                offsets.remove(max(offsets))
+                offsets.remove(min(offsets))
+                
+            # 평균 오프셋 계산
+            server_time_offset = sum(offsets) / len(offsets)
+            print(f"서버 시간 동기화 완료: 오프셋 {server_time_offset:.3f}초")
+            last_time_sync = time.time()
+            return True
+        else:
+            print("서버 시간 동기화 실패: 유효한 응답 없음")
+            return False
+            
+    except Exception as e:
+        print(f"서버 시간 동기화 오류: {str(e)}")
+        return False
+
+# 서버 시간 기준 현재 시간 반환
+def get_server_time():
+    """서버 시간 기준의 현재 시간 계산"""
+    return datetime.now() + timedelta(seconds=server_time_offset)
+
 # 비동기 이미지 처리 워크플로우
 async def async_image_workflow(camera_id):
     """이미지 처리 전체 워크플로우"""
@@ -249,8 +314,8 @@ async def async_image_workflow(camera_id):
             
             try:
                 image = Image.open(img_bytes)
-                # 타임스탬프 추가
-                timestamp = datetime.now()
+                # 서버 기준 타임스탬프 추가
+                timestamp = get_server_time()
                 
                 # 동기화 버퍼에 프레임 저장
                 frame_data = {
@@ -281,8 +346,8 @@ async def async_image_workflow(camera_id):
             image = await future
             
             if image is not None:
-                # 타임스탬프 추가
-                timestamp = datetime.now()
+                # 서버 기준 타임스탬프 추가
+                timestamp = get_server_time()
                 
                 # 동기화 버퍼에 프레임 저장
                 frame_data = {
@@ -320,13 +385,21 @@ async def process_multiple_cameras(camera_ids):
 # 비동기 이미지 업데이트 함수
 async def update_images():
     """백그라운드에서 이미지를 가져오는 함수"""
-    global selected_cameras, is_running
+    global selected_cameras, is_running, last_time_sync
     
     # 세션 초기화
     await init_session()
     
+    # 초기 서버 시간 동기화
+    await sync_server_time()
+    
     try:
         while is_running:
+            # 주기적 서버 시간 동기화
+            current_time = time.time()
+            if current_time - last_time_sync >= TIME_SYNC_INTERVAL:
+                await sync_server_time()
+            
             # 전역 변수로 카메라 ID 목록 확인
             camera_ids = selected_cameras
             
@@ -380,6 +453,9 @@ def main():
     
     # 상단 헤더
     st.title("KOMI 웹캠 모니터링")
+    
+    # 서버 정보 표시
+    st.caption(f"서버 연결: {API_URL} (시간 오프셋: {server_time_offset:.3f}초)")
     
     # 서버 상태 확인
     if st.session_state.server_status is None:
