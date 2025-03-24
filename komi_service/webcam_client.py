@@ -18,6 +18,7 @@ running = True
 cameras = {}
 api_url = "http://localhost:8000"
 server_time_offset = 0.0  # 서버와의 시간차 (초 단위)
+ws_connections = {}  # 카메라 ID -> WebSocket 연결
 
 # 서버 시간 동기화 함수
 async def sync_server_time():
@@ -91,14 +92,14 @@ def get_event_loop():
         asyncio.set_event_loop(thread_local.loop)
     return thread_local.loop
 
-# 비동기 세션 초기화
+# 비동기 HTTP 클라이언트 세션 초기화
 async def init_session():
     """비동기 세션 초기화 (스레드별)"""
     if not get_session():
         thread_local.session = aiohttp.ClientSession()
     return thread_local.session
 
-# 비동기 세션 종료
+# 비동기 HTTP 클라이언트 세션 종료
 async def close_session():
     """현재 스레드의 세션 닫기"""
     session = get_session()
@@ -154,44 +155,35 @@ def init_camera(
         print(f"카메라 초기화 오류: {str(e)}")
         return None
 
-# 이미지 인코딩
+# 이미지 인코딩 함수
 def encode_image(frame, quality=85, max_width=640, verbose=False):
-    """CV2 프레임을 JPEG으로 인코딩 후 Base64 변환
-    
-    Args:
-        frame: 원본 이미지 프레임
-        quality: JPEG 압축 품질 (0-100)
-        max_width: 최대 이미지 폭 (픽셀)
-        verbose: 디버깅 정보 출력 여부
-    """
+    """이미지를 Base64 인코딩"""
     try:
-        # 원본 이미지 크기
-        original_height, original_width = frame.shape[:2]
-        
-        # 해상도 감소 처리 (max_width보다 큰 경우에만)
-        if original_width > max_width:
-            # 비율 유지하면서 크기 조정
-            scale_ratio = max_width / original_width
-            new_height = int(original_height * scale_ratio)
-            frame = cv2.resize(frame, (max_width, new_height), interpolation=cv2.INTER_AREA)
-            if verbose:
-                print(f"이미지 크기 조정: {original_width}x{original_height} -> {max_width}x{new_height}")
-        
-        # JPEG 인코딩 파라미터 설정
-        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
-        
-        # JPEG으로 압축
-        result, encimg = cv2.imencode('.jpg', frame, encode_param)
-        
-        if not result:
-            print("이미지 인코딩 실패")
-            return None
+        # 프레임 크기 조정 (최대 너비 초과 시)
+        h, w = frame.shape[:2]
+        if w > max_width:
+            # 종횡비 유지하며 리사이즈
+            aspect_ratio = h / w
+            new_w = max_width
+            new_h = int(new_w * aspect_ratio)
             
-        # 압축률 정보 출력 (디버깅용, 필요시에만)
+            # 빠른 리사이징을 위해 INTER_AREA 사용
+            frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            if verbose:
+                print(f"이미지 리사이즈: {w}x{h} -> {new_w}x{new_h}")
+        
+        # 압축 전 이미지 크기 측정
+        original_size = frame.size * frame.itemsize  # 바이트 단위
+        
+        # JPEG으로 인코딩
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
+        _, encimg = cv2.imencode('.jpg', frame, encode_param)
+        
+        # 압축 후 이미지 크기 측정
+        compressed_size = len(encimg)
+        compression_ratio = 100 - (compressed_size / original_size * 100)
+        
         if verbose:
-            compressed_size = len(encimg)
-            original_size = frame.size * frame.itemsize
-            compression_ratio = (1 - compressed_size / original_size) * 100
             print(f"압축률: {compression_ratio:.1f}% ({original_size/1024:.1f}KB -> {compressed_size/1024:.1f}KB)")
             
         # Base64로 인코딩
@@ -201,71 +193,79 @@ def encode_image(frame, quality=85, max_width=640, verbose=False):
         print(f"이미지 인코딩 오류: {str(e)}")
         return None
 
-# 비동기 서버 통신
-async def register_camera(camera_id, camera_info):
-    """서버에 카메라 등록"""
+# WebSocket 연결 및 카메라 등록
+async def connect_camera_websocket(camera_id, camera_info):
+    """WebSocket을 통해 카메라 연결 및 등록"""
+    global ws_connections
+    
     try:
         session = await init_session()
-        payload = {
+        
+        # WebSocket URL 생성
+        if api_url.startswith('http://'):
+            ws_url = f"ws://{api_url[7:]}/ws/camera"
+        elif api_url.startswith('https://'):
+            ws_url = f"wss://{api_url[8:]}/ws/camera"
+        else:
+            ws_url = f"ws://{api_url}/ws/camera"
+        
+        # WebSocket 연결
+        ws = await session.ws_connect(ws_url, timeout=10)
+        
+        # 카메라 등록 메시지 전송
+        register_msg = {
+            "type": "register",
             "camera_id": camera_id,
             "info": camera_info
         }
         
-        # WebSocket URL을 HTTP URL로 변환
-        http_url = api_url
-        if http_url.startswith("ws://"):
-            http_url = "http://" + http_url[5:].split("/")[0]
+        await ws.send_json(register_msg)
         
-        async with session.post(
-            f"{http_url}/register_camera", 
-            json=payload, 
-            timeout=5
-        ) as response:
-            if response.status == 200:
-                print(f"카메라 {camera_id} 등록 성공")
-                return True
-            else:
-                text = await response.text()
-                print(f"카메라 등록 실패: {text}")
-                return False
-    except Exception as e:
-        print(f"카메라 등록 오류: {str(e)}")
-        return False
-
-# 비동기 이미지 업로드
-async def upload_image(camera_id, image_data, timestamp):
-    """서버에 이미지 업로드"""
-    try:
-        if not image_data:
+        # 응답 대기
+        response = await ws.receive_json()
+        
+        if response.get("type") == "connection_successful":
+            print(f"카메라 {camera_id} WebSocket 연결 및 등록 성공")
+            ws_connections[camera_id] = ws
+            return True
+        else:
+            print(f"카메라 등록 실패: {response}")
+            await ws.close()
             return False
             
-        session = await init_session()
-        payload = {
+    except Exception as e:
+        print(f"WebSocket 연결 오류: {str(e)}")
+        return False
+
+# WebSocket을 통한 이미지 전송
+async def send_frame_via_websocket(camera_id, image_data, timestamp):
+    """WebSocket을 통해 이미지 프레임 전송"""
+    try:
+        if camera_id not in ws_connections:
+            print(f"카메라 {camera_id}의 WebSocket 연결이 없습니다")
+            return False
+            
+        ws = ws_connections[camera_id]
+        
+        # 프레임 메시지 생성
+        frame_msg = {
+            "type": "frame",
             "camera_id": camera_id,
             "image_data": image_data,
             "timestamp": timestamp.isoformat()
         }
         
-        # WebSocket URL을 HTTP URL로 변환
-        http_url = api_url
-        if http_url.startswith("ws://"):
-            http_url = "http://" + http_url[5:].split("/")[0]
-        
-        async with session.post(
-            f"{http_url}/upload_image", 
-            json=payload, 
-            timeout=2
-        ) as response:
-            if response.status != 200:
-                text = await response.text()
-                print(f"이미지 업로드 실패: {text}")
-                return False
-            return True
-    except asyncio.TimeoutError:
-        print(f"이미지 업로드 타임아웃")
-        return False
+        # 메시지 전송
+        await ws.send_json(frame_msg)
+        return True
+            
     except Exception as e:
-        print(f"이미지 업로드 오류: {str(e)}")
+        print(f"프레임 전송 오류: {str(e)}")
+        
+        # 연결 오류 시 재연결 시도를 위해 연결 제거
+        if camera_id in ws_connections:
+            del ws_connections[camera_id]
+            
         return False
 
 # 메인 카메라 처리 루프
@@ -283,13 +283,13 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640):
     # 서버 시간 동기화
     await sync_server_time()
     
-    # 카메라 등록
-    registration_success = await register_camera(camera_id, camera_info)
+    # WebSocket 연결 및 카메라 등록
+    registration_success = await connect_camera_websocket(camera_id, camera_info)
     if not registration_success:
         print(f"카메라 {camera_id} 등록 실패로 종료")
         return
     
-    last_upload_time = datetime.now()
+    last_frame_time = datetime.now()
     frame_interval = 1.0 / camera_info["fps"]  # 프레임 간 시간 간격
     
     # 주기적 시간 동기화 설정
@@ -302,6 +302,10 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640):
     # 첫 프레임은 디버깅 정보 출력을 위해 True로 설정
     first_frame = True
     
+    # WebSocket 핑/퐁 타이머
+    last_ping_time = time.time()
+    ping_interval = 30  # 30초마다 핑 전송
+    
     try:
         while running:
             # 주기적으로 서버 시간 동기화
@@ -309,6 +313,17 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640):
             if current_time - last_sync_time >= sync_interval:
                 await sync_server_time()
                 last_sync_time = current_time
+                
+            # 주기적으로 핑 전송 (연결 유지)
+            if current_time - last_ping_time >= ping_interval:
+                if camera_id in ws_connections:
+                    try:
+                        await ws_connections[camera_id].ping()
+                        last_ping_time = current_time
+                    except:
+                        # 핑 실패 시 재연결 시도
+                        if await connect_camera_websocket(camera_id, camera_info):
+                            last_ping_time = current_time
             
             # 프레임 캡처
             ret, frame = camera.read()
@@ -320,7 +335,7 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640):
                 continue
             
             current_time = datetime.now()
-            time_diff = (current_time - last_upload_time).total_seconds()
+            time_diff = (current_time - last_frame_time).total_seconds()
             
             # 지정된 FPS에 따라 이미지 업로드
             if time_diff >= frame_interval:
@@ -335,10 +350,12 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640):
                     # 서버 시간 기준으로 타임스탬프 생성
                     server_timestamp = get_server_time()
                     
-                    # 이미지 업로드
-                    upload_success = await upload_image(camera_id, image_data, server_timestamp)
-                    if upload_success:
-                        last_upload_time = current_time
+                    # WebSocket을 통해 이미지 전송
+                    if await send_frame_via_websocket(camera_id, image_data, server_timestamp):
+                        last_frame_time = current_time
+                    else:
+                        # 전송 실패 시 재연결 시도
+                        await connect_camera_websocket(camera_id, camera_info)
                     
             # 적절한 딜레이
             remaining_time = frame_interval - (datetime.now() - current_time).total_seconds()
@@ -353,6 +370,13 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640):
         print(f"카메라 {camera_id} 루프 오류: {str(e)}")
     finally:
         print(f"카메라 {camera_id} 연결 종료")
+        # WebSocket 연결 종료
+        if camera_id in ws_connections:
+            try:
+                await ws_connections[camera_id].close()
+                del ws_connections[camera_id]
+            except:
+                pass
         camera.release()
 
 # 카메라 스레드 함수
@@ -408,8 +432,8 @@ def main():
                         help='이미지 압축 품질 (0-100, 기본값: 85)')
     parser.add_argument('--max-width', type=int, default=640,
                         help='이미지 최대 폭 (픽셀, 기본값: 640)')
-    parser.add_argument('--fps', type=int, default=15,
-                        help='카메라 프레임 레이트 (기본값: 15)')
+    parser.add_argument('--fps', type=int, default=20,
+                        help='카메라 프레임 레이트 (기본값: 20)')
     
     # 인자 파싱
     args = parser.parse_args()
