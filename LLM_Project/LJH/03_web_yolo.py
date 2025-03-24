@@ -178,7 +178,7 @@ while cap.isOpened() and frame_count < 87:
     frame = cv2.flip(frame, 1)
     if not ret:
         break
-    image_name = f"frame{saved_idx:03d}.jpg"
+    image_name = f"frame_{saved_idx:03d}.jpg"
     output_image_path = os.path.join(image_output_folder, image_name)
     cv2.imwrite(output_image_path, frame)
     print(f"프레임 저장: {image_name}")

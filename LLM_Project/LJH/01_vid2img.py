@@ -59,7 +59,7 @@ while video.isOpened():
         break
     
     if int(video.get(30)) % fps == 0:  # 1초마다 프레임 저장
-        frame_filename = os.path.join(save_path, f"frame{count}.jpg")
+        frame_filename = os.path.join(save_path, f"frame_{count:03d}.jpg")
         cv2.imwrite(frame_filename, image)
         print('Saved frame number :', int(video.get(1)))
         count += 1
