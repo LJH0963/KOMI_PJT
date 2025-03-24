@@ -218,7 +218,5 @@ python komi_service/webcam_client.py --cameras camera_12346:0 --server http://19
 
 
 # TODO:
-- !! 수정된 코드 작동 확인 !!
-- 싱크 맞추기(멀티 카메라 동기화)
 - 카메라 클라이언트에서 좌표 정보 받기
 - 스트림릿에 점수 출력하기
