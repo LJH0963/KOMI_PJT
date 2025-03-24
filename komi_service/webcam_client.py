@@ -120,8 +120,13 @@ async def register_camera(camera_id, camera_info):
             "info": camera_info
         }
         
+        # WebSocket URL을 HTTP URL로 변환
+        http_url = api_url
+        if http_url.startswith("ws://"):
+            http_url = "http://" + http_url[5:].split("/")[0]
+        
         async with session.post(
-            f"{api_url}/register_camera", 
+            f"{http_url}/register_camera", 
             json=payload, 
             timeout=5
         ) as response:
@@ -150,8 +155,13 @@ async def upload_image(camera_id, image_data, timestamp):
             "timestamp": timestamp.isoformat()
         }
         
+        # WebSocket URL을 HTTP URL로 변환
+        http_url = api_url
+        if http_url.startswith("ws://"):
+            http_url = "http://" + http_url[5:].split("/")[0]
+        
         async with session.post(
-            f"{api_url}/upload_image", 
+            f"{http_url}/upload_image", 
             json=payload, 
             timeout=2
         ) as response:
