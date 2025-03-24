@@ -79,8 +79,9 @@ async def health_check():
 @app.get("/server_time")
 async def get_server_time():
     """서버의 현재 시간 정보 제공"""
+    now = datetime.now()
     return {
-        "server_time": datetime.now().isoformat(),
+        "server_time": now.isoformat(),
         "timestamp": time.time()
     }
 
