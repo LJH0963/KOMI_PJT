@@ -55,7 +55,7 @@ def is_pose_similar(current_pose, reference_pose, threshold=50):
     return mean_dist < threshold
 
 # YOLO 모델 로딩
-yolo_model = YOLO("yolo11n-pose.pt")
+yolo_model = YOLO("yolo11x-pose.pt")
 
 # 기준 마스크 이미지 및 keypoint 로딩
 mask_image_path = 'C:/Users/user/Desktop/data/frame100_mask_rgba.png'
