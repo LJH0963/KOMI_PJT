@@ -176,6 +176,8 @@ async def async_image_workflow(camera_id):
             
             try:
                 image = Image.open(img_bytes)
+                # 타임스탬프 추가
+                timestamp = datetime.now()
                 # 이미지 결과를 큐에 저장
                 if camera_id not in image_queues:
                     image_queues[camera_id] = queue.Queue(maxsize=1)
@@ -183,7 +185,7 @@ async def async_image_workflow(camera_id):
                 if not image_queues[camera_id].full():
                     image_queues[camera_id].put({
                         "image": image,
-                        "time": datetime.now()
+                        "time": timestamp
                     })
                 return True
             except Exception as e:
@@ -198,6 +200,8 @@ async def async_image_workflow(camera_id):
             image = await future
             
             if image is not None:
+                # 타임스탬프 추가
+                timestamp = datetime.now()
                 # 이미지 결과를 큐에 저장
                 if camera_id not in image_queues:
                     image_queues[camera_id] = queue.Queue(maxsize=1)
@@ -205,7 +209,7 @@ async def async_image_workflow(camera_id):
                 if not image_queues[camera_id].full():
                     image_queues[camera_id].put({
                         "image": image,
-                        "time": datetime.now()
+                        "time": timestamp
                     })
                 return True
     except Exception as e:
@@ -348,29 +352,19 @@ def main():
     try:
         while True:
             # 각 카메라별 이미지 큐에서 데이터 가져오기
-            for camera_id in st.session_state.selected_cameras[:2]:  # 최대 2개
+            for camera_id in st.session_state.selected_cameras[:2]:
                 if camera_id in image_queues and not image_queues[camera_id].empty():
-                    try:
-                        img_data = image_queues[camera_id].get(block=False)
-                        st.session_state.camera_images[camera_id] = img_data.get("image")
-                        st.session_state.image_update_time[camera_id] = img_data.get("time")
-                    except queue.Empty:
-                        pass
+                    img_data = image_queues[camera_id].get(block=False)
+                    st.session_state.camera_images[camera_id] = img_data.get("image")
+                    st.session_state.image_update_time[camera_id] = img_data.get("time")
             
             # 이미지 업데이트
-            for camera_id in st.session_state.selected_cameras[:2]:  # 최대 2개
-                if camera_id in st.session_state.camera_images and st.session_state.camera_images[camera_id] is not None:
-                    if camera_id in image_slots:
-                        image_slots[camera_id].image(st.session_state.camera_images[camera_id], use_container_width=True)
-                    
-                    # 상태 업데이트
-                    if camera_id in st.session_state.image_update_time and camera_id in status_slots:
-                        status_time = st.session_state.image_update_time[camera_id].strftime('%H:%M:%S')
-                        status_slots[camera_id].text(f"업데이트: {status_time}")
+            for camera_id in st.session_state.selected_cameras[:2]:
+                if camera_id in st.session_state.camera_images:
+                    image_slots[camera_id].image(st.session_state.camera_images[camera_id], use_container_width=True)
+                    status_time = st.session_state.image_update_time[camera_id].strftime('%H:%M:%S')
+                    status_slots[camera_id].text(f"업데이트: {status_time}")
             
-            # 전역 변수에 현재 선택된 카메라 ID 설정
-            selected_cameras = st.session_state.selected_cameras
-                
             time.sleep(0.1)  # UI 업데이트 간격
     except Exception as e:
         st.error(f"오류: {str(e)}")
