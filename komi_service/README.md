@@ -213,7 +213,7 @@ KOMI 서비스는 asyncio와 WebSocket을 활용한 비동기 처리를 통해 �
 ```
 uvicorn komi_service.fastapi_server:app --host 0.0.0.0 --port 8000
 streamlit run komi_service/streamlit_app.py -- --server_url http://192.168.10.87:8000
-python -m komi_service.webcam_client --server ws://192.168.10.87:8000/ws/camera
+python komi_service.webcam_client --cameras camera_12345:0 --server ws://192.168.10.87:8000/ws/camera
 ```
 
 
