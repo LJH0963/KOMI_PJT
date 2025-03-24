@@ -1,4 +1,8 @@
 import streamlit as st
+
+# 페이지 설정 (스크립트의 첫 번째 Streamlit 명령어로 이동)
+st.set_page_config(page_title="KOMI 모니터링", layout="wide")
+
 import json
 import time
 import numpy as np
@@ -14,7 +18,11 @@ from concurrent.futures import ThreadPoolExecutor
 import queue
 
 # 서버 URL 설정
-API_URL = "http://localhost:8000"
+API_URL = "http://localhost:8000"  # 기본값
+
+# Streamlit의 query parameter를 사용하여 서버 URL을 설정
+if 'server_url' in st.query_params:
+    API_URL = st.query_params['server_url']
 
 # 스레드 안전 데이터 구조
 image_queues = {}  # 카메라별 이미지 큐
@@ -285,8 +293,6 @@ def run_async_loop():
 # 메인 UI
 def main():
     global selected_cameras, is_running
-    
-    st.set_page_config(page_title="KOMI 모니터링", layout="wide")
     
     # 상단 헤더
     st.title("KOMI 웹캠 모니터링")
