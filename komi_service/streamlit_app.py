@@ -12,7 +12,6 @@ import aiohttp
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import queue
-import collections
 
 # 서버 URL 설정
 API_URL = "http://localhost:8000"
@@ -37,8 +36,6 @@ if 'server_status' not in st.session_state:
     st.session_state.server_status = None
 if 'camera_images' not in st.session_state:
     st.session_state.camera_images = {}
-if 'last_pose_data' not in st.session_state:
-    st.session_state.last_pose_data = {}
 if 'image_update_time' not in st.session_state:
     st.session_state.image_update_time = {}
 
@@ -130,20 +127,20 @@ async def async_get_raw_image(camera_id):
 
 # 비동기 JSON 이미지 데이터 요청
 async def async_get_camera_image(camera_id):
-    """비동기적으로 이미지와 포즈 데이터 요청"""
+    """비동기적으로 이미지 데이터 요청"""
     if not camera_id:
-        return None, None
+        return None
         
     try:
         session = await init_session()
         async with session.get(f"{API_URL}/latest_image/{camera_id}", timeout=0.5) as response:
             if response.status == 200:
                 data = await response.json()
-                return data.get("image_data"), data.get("pose_data")
-            return None, None
+                return data.get("image_data")
+            return None
     except Exception as e:
         print(f"이미지 요청 오류: {str(e)}")
-        return None, None
+        return None
 
 # 스레드에서 이미지 디코딩 처리
 def process_image_in_thread(image_data):
@@ -193,7 +190,7 @@ async def async_image_workflow(camera_id):
                 print(f"이미지 처리 오류: {str(e)}")
         
         # 실패 시 JSON API 시도
-        image_data, pose_data = await async_get_camera_image(camera_id)
+        image_data = await async_get_camera_image(camera_id)
         if image_data:
             loop = get_event_loop()
             # 별도 스레드에서 이미지 디코딩
@@ -208,7 +205,6 @@ async def async_image_workflow(camera_id):
                 if not image_queues[camera_id].full():
                     image_queues[camera_id].put({
                         "image": image,
-                        "pose_data": pose_data,
                         "time": datetime.now()
                     })
                 return True
@@ -357,7 +353,6 @@ def main():
                     try:
                         img_data = image_queues[camera_id].get(block=False)
                         st.session_state.camera_images[camera_id] = img_data.get("image")
-                        st.session_state.last_pose_data[camera_id] = img_data.get("pose_data")
                         st.session_state.image_update_time[camera_id] = img_data.get("time")
                     except queue.Empty:
                         pass

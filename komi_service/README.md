@@ -79,12 +79,7 @@ Streamlit 앱은 기본적으로 웹 브라우저를 열고 http://localhost:850
 
 ### 3. 웹캠 클라이언트 실행
 ```bash
-python -m komi_service.webcam_client
-```
-
-#### 명령행 옵션
-```bash
-python -m komi_service.webcam_client --server ws://localhost:8000/ws/camera --camera 0 --fps 10
+python komi_service/webcam_client.py --cameras camera_12345:0
 ```
 
 | 옵션 | 설명 | 기본값 |
