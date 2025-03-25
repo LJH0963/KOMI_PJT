@@ -73,57 +73,91 @@ async def get_server_time():
 async def get_cameras():
     """등록된 카메라 목록 조회"""
     with data_lock:
-        # 최근 5분 이내 활동이 있는 카메라만 필터링
-        now = datetime.now()
+        # 현재 연결된 카메라만 반환 (WebSocket이 있는 카메라)
         active_cameras = [
             camera_id for camera_id, info in camera_info.items()
-            if (now - info["last_seen"]).total_seconds() < 300  # 5분 = 300초
+            if "websocket" in info
         ]
     
     return {"cameras": active_cameras, "count": len(active_cameras)}
 
+# 카메라 연결 해제 처리 함수
+async def disconnect_camera(camera_id: str):
+    """카메라 연결 해제 및 리소스 정리"""
+    with data_lock:
+        if camera_id in camera_info:
+            # 연결된 WebSocket 종료
+            if "websocket" in camera_info[camera_id]:
+                try:
+                    await camera_info[camera_id]["websocket"].close(code=1000)
+                except Exception:
+                    pass
+            
+            # 구독자에게 카메라 연결 해제 알림
+            subscribers = camera_info[camera_id].get("subscribers", set()).copy()
+            for ws in subscribers:
+                try:
+                    await ws.send_json({
+                        "type": "camera_disconnected",
+                        "camera_id": camera_id,
+                        "timestamp": datetime.now().isoformat()
+                    })
+                except Exception:
+                    pass
+            
+            # 카메라 정보 완전히 삭제
+            del camera_info[camera_id]
+            
+            # 이미지 데이터도 삭제
+            if camera_id in latest_image_data:
+                del latest_image_data[camera_id]
+            if camera_id in latest_timestamps:
+                del latest_timestamps[camera_id]
+            
+            print(f"카메라 {camera_id} 연결 해제 및 정리 완료")
+            return True
+    return False
+
 # 정기적인 연결 정리 작업
 async def cleanup_connections():
-    # 5분마다 실행
+    # 60초마다 실행
     while app_state["is_running"]:
         try:
             now = datetime.now()
             
-            # 마지막 정리 후 5분 이상 지났는지 확인
-            if (now - app_state["last_connection_cleanup"]).total_seconds() >= 300:
+            # 마지막 정리 후 60초 이상 지났는지 확인
+            if (now - app_state["last_connection_cleanup"]).total_seconds() >= 60:
+                # 일반 WebSocket 연결 확인
                 dead_connections = set()
-                
-                # 활성 연결 확인
                 for ws in active_connections:
                     try:
-                        # 핑을 보내서 연결 상태 확인
                         await ws.send_text("ping")
                     except Exception:
                         dead_connections.add(ws)
                 
-                # 데드 연결 제거
+                # 일반 WebSocket 데드 연결 제거
                 for ws in dead_connections:
                     active_connections.discard(ws)
                 
-                # 카메라 연결 정리
+                # 카메라 연결 확인 및 정리
+                disconnected_cameras = []
                 with data_lock:
                     for camera_id, info in list(camera_info.items()):
-                        # 마지막 활동 시간이 5분 이상 지난 카메라 확인
-                        if "last_seen" in info and (now - info["last_seen"]).total_seconds() >= 300:
-                            # 연결 해제 확인
-                            if "websocket" in info:
-                                try:
-                                    await info["websocket"].close(code=1000)
-                                except Exception:
-                                    pass
-                                del info["websocket"]
+                        # 마지막 활동 시간이 60초 이상 지난 카메라 확인
+                        if "last_seen" in info and (now - info["last_seen"]).total_seconds() >= 60:
+                            # 연결 종료 후 정보 삭제
+                            disconnected_cameras.append(camera_id)
+                
+                # 비동기 컨텍스트 밖에서 실행
+                for camera_id in disconnected_cameras:
+                    await disconnect_camera(camera_id)
                 
                 # 정리 완료 시간 업데이트
                 app_state["last_connection_cleanup"] = now
             
-            await asyncio.sleep(60)  # 60초마다 확인
+            await asyncio.sleep(10)  # 10초마다 확인
         except Exception:
-            await asyncio.sleep(60)  # 오류 발생해도 계속 실행
+            await asyncio.sleep(10)  # 오류 발생해도 계속 실행
 
 # WebSocket 구독자에게 이미지 브로드캐스트
 async def broadcast_image_to_subscribers(camera_id: str, image_data: str, timestamp: datetime):
@@ -202,7 +236,7 @@ async def keep_websocket_alive(websocket: WebSocket):
     ping_interval = 30  # 30초마다 핑 전송
     last_ping_time = time.time()
     last_received_time = time.time()
-    max_idle_time = 90  # 90초 동안 응답이 없으면 연결 종료
+    max_idle_time = 60  # 60초 동안 응답이 없으면 연결 종료
     
     try:
         while True:
@@ -261,19 +295,15 @@ async def websocket_endpoint(websocket: WebSocket):
     app_state["active_websockets"] = len(active_connections)
     
     # 초기 카메라 목록 전송
-    now = datetime.now()
     with data_lock:
-        active_cameras = [
-            camera_id for camera_id, info in camera_info.items()
-            if (now - info["last_seen"]).total_seconds() < 300
-        ]
+        active_cameras = list(camera_info.keys())
     
     try:
         # 초기 데이터 전송
         await websocket.send_json({
             "type": "init",
             "cameras": active_cameras,
-            "timestamp": now.isoformat()
+            "timestamp": datetime.now().isoformat()
         })
         
         # 연결 유지 루프 - 개선된 함수 사용
@@ -303,6 +333,10 @@ async def camera_websocket(websocket: WebSocket):
         
         if data.get("type") == "register":
             camera_id = data.get("camera_id")
+            
+            # 기존 동일 ID 카메라가 있으면 연결 해제
+            if camera_id in camera_info:
+                await disconnect_camera(camera_id)
         
         # 새 카메라 ID 생성
         if not camera_id:
@@ -328,7 +362,7 @@ async def camera_websocket(websocket: WebSocket):
         # 연결 유지 및 프레임 수신 루프
         last_seen = datetime.now()
         last_keepalive = time.time()
-        keepalive_interval = 30  # 30초마다 핑 전송
+        keepalive_interval = 15  # 15초마다 핑 전송
         
         while True:
             try:
@@ -344,21 +378,14 @@ async def camera_websocket(websocket: WebSocket):
                     last_seen = datetime.now()
                     continue
                 
-                # 정기적인 핑 전송
-                current_time = time.time()
-                if current_time - last_keepalive >= keepalive_interval:
-                    try:
-                        await websocket.send_text("ping")
-                        last_keepalive = current_time
-                    except Exception:
-                        # 핑 전송 실패 시 연결 종료
-                        break
-                
                 # JSON 메시지 파싱
                 try:
                     data = json.loads(message)
                     
-                    if data.get("type") == "frame":
+                    # 타입별 메시지 처리
+                    msg_type = data.get("type")
+                    
+                    if msg_type == "frame":
                         # 프레임 저장
                         image_data = data.get("image_data")
                         if image_data:
@@ -379,9 +406,26 @@ async def camera_websocket(websocket: WebSocket):
                             
                             # 일반 웹소켓 클라이언트에게 알림
                             await notify_clients(camera_id)
+                    
+                    elif msg_type == "disconnect":
+                        # 클라이언트에서 종료 요청 - 정상 종료
+                        print(f"카메라 {camera_id}에서 연결 종료 요청을 받음")
+                        break
+                        
                 except json.JSONDecodeError:
                     # JSON 파싱 오류는 무시
                     pass
+                
+                # 정기적인 핑 전송
+                current_time = time.time()
+                if current_time - last_keepalive >= keepalive_interval:
+                    try:
+                        await websocket.send_text("ping")
+                        last_keepalive = current_time
+                    except Exception:
+                        # 핑 전송 실패 시 연결 종료
+                        break
+                    
             except asyncio.TimeoutError:
                 # 타임아웃은 정상적인 상황, 핑 체크만 수행
                 current_time = time.time()
@@ -393,21 +437,22 @@ async def camera_websocket(websocket: WebSocket):
                         # 핑 전송 실패 시 연결 종료
                         break
                 
-                # 장시간 메시지가 없는지 확인 (90초 이상)
-                if (datetime.now() - last_seen).total_seconds() > 90:
+                # 장시간 메시지가 없는지 확인 (45초 이상)
+                if (datetime.now() - last_seen).total_seconds() > 45:
                     # 너무 오래 메시지가 없으면 연결 종료
+                    print(f"카메라 {camera_id} 45초 동안 활동 없음, 연결 종료")
                     break
-            except Exception:
+            except Exception as e:
                 # 기타 예외 발생 시 연결 종료
+                print(f"카메라 {camera_id} 처리 오류: {str(e)}")
                 break
     except Exception as e:
         print(f"웹캠 웹소켓 오류: {str(e)}")
     finally:
-        # 연결 종료 처리
-        if camera_id and camera_id in camera_info:
-            with data_lock:
-                if "websocket" in camera_info[camera_id]:
-                    del camera_info[camera_id]["websocket"]
+        # 연결 종료 처리 - 완전히 삭제
+        if camera_id:
+            print(f"카메라 {camera_id} 연결 종료 처리 중...")
+            await disconnect_camera(camera_id)
 
 # WebSocket을 통한 이미지 스트리밍 엔드포인트
 @app.websocket("/ws/stream/{camera_id}")
