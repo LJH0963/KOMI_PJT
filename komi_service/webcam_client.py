@@ -29,6 +29,7 @@ MAX_RECONNECT_ATTEMPTS = 5  # 최대 재연결 시도 횟수
 RECONNECT_DELAY = 2.0  # 초기 재연결 지연 시간(초)
 MAX_RECONNECT_DELAY = 30.0  # 최대 재연결 지연 시간(초)
 PING_INTERVAL = 5  # 핑 전송 간격
+FLIP_HORIZONTAL = True  # 좌우 반전 기본값
 
 # 서버 시간 동기화 함수
 async def sync_server_time():
@@ -145,9 +146,13 @@ def init_camera(
         return None
 
 # 이미지 인코딩 함수
-def encode_image(frame, quality=85, max_width=640, verbose=False):
+def encode_image(frame, quality=85, max_width=640, flip=True, verbose=False):
     """이미지를 Base64 인코딩"""
     try:
+        # 좌우 반전 처리
+        if flip:
+            frame = cv2.flip(frame, 1)  # 1은 좌우 반전을 의미
+            
         # 프레임 크기 조정 (최대 너비 초과 시)
         h, w = frame.shape[:2]
         if w > max_width:
@@ -370,7 +375,7 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640):
             # 지정된 FPS에 따라 이미지 업로드
             if time_diff >= frame_interval:
                 # 이미지 인코딩
-                image_data = encode_image(frame, quality=quality, max_width=max_width)
+                image_data = encode_image(frame, quality=quality, max_width=max_width, flip=FLIP_HORIZONTAL)
                 
                 if image_data:
                     # 서버 시간 기준으로 타임스탬프 생성
