@@ -22,13 +22,11 @@ server_time_offset = 0.0  # 서버와의 시간차 (초 단위)
 ws_connections = {}  # 카메라 ID -> WebSocket 연결
 connection_status = {}  # 카메라 ID -> 연결 상태 ("connected", "connecting", "disconnected")
 reconnect_attempts = {}  # 카메라 ID -> 재연결 시도 횟수
-last_ping_times = {}  # 카메라 ID -> 마지막 핑 전송 시간
 
 # WebSocket 연결 설정
 MAX_RECONNECT_ATTEMPTS = 5  # 최대 재연결 시도 횟수
 RECONNECT_DELAY = 2.0  # 초기 재연결 지연 시간(초)
 MAX_RECONNECT_DELAY = 30.0  # 최대 재연결 지연 시간(초)
-PING_INTERVAL = 5  # 핑 전송 간격
 
 # 서버 시간 동기화 함수
 async def sync_server_time():
@@ -220,14 +218,15 @@ async def connect_camera_websocket(camera_id, camera_info):
         else:
             ws_url = f"ws://{api_url}/ws/camera"
         
-        # WebSocket 연결 설정
-        ws_timeout = aiohttp.ClientWSTimeout(ws_close=60.0)  # 타임아웃 60초로 설정
+        # 향상된 WebSocket 연결 옵션 - 업데이트된 형식 사용
+        heartbeat = 30.0  # 30초 핑퐁
+        ws_timeout = aiohttp.ClientWSTimeout(ws_close=30.0)
         
-        # WebSocket 연결 - 자동 heartbeat 비활성화
+        # WebSocket 연결
         ws = await session.ws_connect(
             ws_url, 
             timeout=ws_timeout, 
-            heartbeat=None,  # 자동 heartbeat 비활성화하고 수동으로 관리
+            heartbeat=heartbeat,
             max_msg_size=0,  # 무제한
             compress=False  # 웹소켓 압축 비활성화로 성능 향상
         )
@@ -250,10 +249,6 @@ async def connect_camera_websocket(camera_id, camera_info):
                 update_connection_status(camera_id, "connected")
                 ws_connections[camera_id] = ws
                 reconnect_attempts[camera_id] = 0
-                
-                # 서버로부터 ping/pong 응답을 처리하기 위한 백그라운드 태스크 실행
-                asyncio.create_task(handle_server_messages(camera_id, ws))
-                
                 return True
             else:
                 update_connection_status(camera_id, "disconnected")
@@ -331,8 +326,9 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640):
     last_sync_time = time.time()
     sync_interval = 300.0  # 5분마다 시간 동기화
     
-    # WebSocket 핑/퐁 타이머 초기화
-    last_ping_times[camera_id] = time.time()
+    # WebSocket 핑/퐁 타이머
+    last_ping_time = time.time()
+    ping_interval = 5  # 5초마다 핑 전송
     
     # 재연결 관련 변수
     if camera_id not in reconnect_attempts:
@@ -347,15 +343,15 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640):
                 last_sync_time = current_time
                 
             # 주기적으로 핑 전송 (연결 유지)
-            if current_time - last_ping_times.get(camera_id, 0) >= PING_INTERVAL:
+            if current_time - last_ping_time >= ping_interval:
                 if camera_id in ws_connections:
                     try:
                         await ws_connections[camera_id].ping()
-                        last_ping_times[camera_id] = current_time
+                        last_ping_time = current_time
                     except:
                         # 핑 실패 시 재연결 시도
                         if await try_reconnect(camera_id, camera_info):
-                            last_ping_times[camera_id] = current_time
+                            last_ping_time = current_time
             
             # 프레임 캡처
             ret, frame = camera.read()
@@ -423,16 +419,13 @@ async def try_reconnect(camera_id, camera_info):
     reconnect_attempts[camera_id] += 1
     
     # 지수 백오프 계산 (최대 30초)
-    delay = min(MAX_RECONNECT_DELAY, RECONNECT_DELAY * (2 ** current_attempts) - 2)
+    delay = min(MAX_RECONNECT_DELAY, RECONNECT_DELAY * (2 ** current_attempts))
     
     # 약간의 무작위성 추가하여 다중 클라이언트의 동시 재연결 방지
     jitter = random.uniform(0, 1.0)
     total_delay = delay + jitter
     
-    print(
-        datetime.now(),
-        f"\n카메라 {camera_id} 재연결 시도 {reconnect_attempts[camera_id]}/{MAX_RECONNECT_ATTEMPTS}, {total_delay:.1f}초 후 시도..."
-    )
+    print(f"카메라 {camera_id} 재연결 시도 {reconnect_attempts[camera_id]}/{MAX_RECONNECT_ATTEMPTS}, {total_delay:.1f}초 후 시도...")
     await asyncio.sleep(total_delay)
     
     # 최대 재연결 시도 횟수 초과 확인
@@ -479,38 +472,6 @@ def run_camera_thread(
                 asyncio.run(close_session())
         except Exception as e:
             print(f"세션 정리 오류: {str(e)}")
-
-# 서버 메시지 처리 함수
-async def handle_server_messages(camera_id, ws):
-    """서버의 WebSocket 메시지를 처리하는 함수"""
-    global last_ping_times, ws_connections, connection_status
-    
-    try:
-        # 연결이 유지되는 동안 반복
-        while camera_id in ws_connections and connection_status.get(camera_id) == "connected":
-            try:
-                # 짧은 타임아웃으로 메시지 수신
-                msg = await asyncio.wait_for(ws.receive(), timeout=0.5)
-                
-                # 텍스트 메시지 처리
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    # 핑/퐁 메시지 처리
-                    if msg.data == "ping":
-                        await ws.send_str("pong")  # 퐁으로 응답
-                        last_ping_times[camera_id] = time.time()  # 시간 업데이트
-                    elif msg.data == "pong":
-                        last_ping_times[camera_id] = time.time()  # 시간 업데이트
-                # 연결 종료 메시지 처리
-                elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-                    break
-            except asyncio.TimeoutError:
-                pass  # 타임아웃은 정상, 계속 진행
-            except Exception:
-                break  # 기타 예외 발생 시 루프 종료
-    finally:
-        # 연결이 끊어진 경우 상태 업데이트
-        if camera_id in connection_status and connection_status.get(camera_id) == "connected":
-            update_connection_status(camera_id, "disconnected")
 
 # 메인 함수
 def main():
