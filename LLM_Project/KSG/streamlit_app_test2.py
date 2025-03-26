@@ -1,22 +1,7 @@
 import streamlit as st
 
-# 페이지 설정 - 사이드바 넓이 조정
-st.set_page_config(
-    page_title="KOMI 운동 가이드", 
-    layout="wide",
-    initial_sidebar_state="expanded",
-    menu_items=None
-)
-
-# 사이드바 넓이 줄이기
-st.markdown("""
-<style>
-    [data-testid="stSidebar"] {
-        min-width: 220px;
-        max-width: 220px;
-    }
-</style>
-""", unsafe_allow_html=True)
+# 페이지 설정
+st.set_page_config(page_title="KOMI 운동 가이드", layout="wide")
 
 import json
 import time
@@ -94,16 +79,12 @@ if 'pose_data' not in st.session_state:
     st.session_state.pose_data = {}
 if 'show_pose_overlay' not in st.session_state:
     st.session_state.show_pose_overlay = True
-if 'page' not in st.session_state:
-    st.session_state.page = 'exercise_select'
-if 'selected_exercise' not in st.session_state:
-    st.session_state.selected_exercise = None
-if 'front_camera' not in st.session_state:
-    st.session_state.front_camera = "선택 안함"
-if 'side_camera' not in st.session_state:
-    st.session_state.side_camera = "선택 안함"
-if 'show_videos' not in st.session_state:
-    st.session_state.show_videos = False
+if 'exercise_session' not in st.session_state:
+    st.session_state.exercise_session = None
+if 'exercise_status' not in st.session_state:
+    st.session_state.exercise_status = None
+if 'countdown' not in st.session_state:
+    st.session_state.countdown = None
 
 # Base64 이미지 디코딩 함수
 def decode_image(base64_image):
@@ -156,20 +137,29 @@ def run_async(coroutine):
     loop = get_event_loop()
     return loop.run_until_complete(coroutine)
 
+# 비디오 로드 함수
+def load_video(video_path):
+    """비디오 파일을 로드하여 스트림릿에 표시할 바이트 데이터로 변환"""
+    try:
+        if os.path.exists(video_path):
+            with open(video_path, 'rb') as video_file:
+                return video_file.read()
+        return None
+    except Exception:
+        return None
+
 # 비동기 카메라 목록 가져오기
 async def async_get_cameras():
     """비동기적으로 카메라 목록 가져오기"""
     try:
         session = await init_session()
-        # 타임아웃 파라미터를 숫자 대신 ClientTimeout 객체로 변경
         request_timeout = aiohttp.ClientTimeout(total=2)
         async with session.get(f"{API_URL}/cameras", timeout=request_timeout) as response:
             if response.status == 200:
                 data = await response.json()
                 return data.get("cameras", []), "연결됨"
             return [], "오류"
-    except Exception as e:
-        print(f"카메라 목록 요청 오류: {str(e)}")
+    except Exception:
         return [], "연결 실패"
 
 # 동기 카메라 목록 가져오기 (Streamlit 호환용)
@@ -550,72 +540,6 @@ async def connect_to_camera_stream(camera_id):
     
     return False
 
-# 포즈 데이터를 이미지에 그리는 함수
-def draw_pose_on_image(image, pose_data):
-    """포즈 데이터를 이미지에 시각화"""
-    if image is None or pose_data is None:
-        return image
-    
-    try:
-        # 이미지 복사
-        img_copy = image.copy()
-        
-        # 키포인트 그리기
-        keypoints = pose_data.get("keypoints", [])
-        if not keypoints or len(keypoints) == 0:
-            return image
-        
-        # 첫 번째 사람의 키포인트만 사용 (여러 명이 감지된 경우)
-        person_keypoints = keypoints[0]
-        
-        # 색상 정의 (RGB)
-        keypoint_color = (255, 0, 0)  # 빨간색
-        skeleton_color = (0, 255, 0)  # 녹색
-        
-        # 각 키포인트 그리기
-        for kp in person_keypoints:
-            if kp.get("x") is not None and kp.get("y") is not None:
-                if kp.get("confidence", 0) > 0.5:  # 높은 신뢰도의 키포인트만
-                    x, y = int(kp["x"]), int(kp["y"])
-                    cv2.circle(img_copy, (x, y), 5, keypoint_color, -1)
-        
-        # COCO 데이터셋 기준 스켈레톤 연결 정의
-        skeleton = [
-            (5, 7), (7, 9), (6, 8), (8, 10),  # 팔 (좌우)
-            (11, 13), (13, 15), (12, 14), (14, 16),  # 다리 (좌우)
-            (5, 6), (11, 12), (5, 11), (6, 12)  # 몸통
-        ]
-        
-        coco_keypoints = [
-            "nose", "left_eye", "right_eye", "left_ear", "right_ear",
-            "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
-            "left_wrist", "right_wrist", "left_hip", "right_hip",
-            "left_knee", "right_knee", "left_ankle", "right_ankle"
-        ]
-        
-        # 키포인트 부위별 딕셔너리 생성
-        kp_dict = {kp["part"]: kp for kp in person_keypoints}
-        
-        # 스켈레톤 그리기
-        for joint1_idx, joint2_idx in skeleton:
-            joint1_name = coco_keypoints[joint1_idx]
-            joint2_name = coco_keypoints[joint2_idx]
-            
-            joint1 = kp_dict.get(joint1_name, {})
-            joint2 = kp_dict.get(joint2_name, {})
-            
-            if (joint1.get("x") is not None and joint1.get("y") is not None and 
-                joint2.get("x") is not None and joint2.get("y") is not None and
-                joint1.get("confidence", 0) > 0.5 and joint2.get("confidence", 0) > 0.5):
-                cv2.line(img_copy, 
-                        (int(joint1["x"]), int(joint1["y"])), 
-                        (int(joint2["x"]), int(joint2["y"])), 
-                        skeleton_color, 2)
-        
-        return img_copy
-    except Exception as e:
-        print(f"포즈 그리기 오류: {str(e)}")
-        return image
 
 # 포즈 데이터 WebSocket 연결 및 수신
 async def connect_to_pose_stream(camera_id):
@@ -753,117 +677,56 @@ async def end_exercise(session_id: str):
     except Exception:
         return None
 
-# 불필요한 페이지 이동 함수 간소화
-def go_to_exercise_view():
-    """운동하기 페이지로 이동"""
-    st.session_state.page = 'exercise_view'
-    
-def go_to_exercise_select():
-    """운동 선택 페이지로 이동"""
-    st.session_state.page = 'exercise_select'
-    st.session_state.show_videos = False
-
-# 운동 선택 페이지
-def exercise_select_page():
-    global selected_cameras
+# 메인 UI
+def main():
+    global selected_cameras, is_running
     
     st.title("KOMI 운동 가이드")
     
-    # 사이드바에 운동 가이드 버튼 (현재 페이지이므로 비활성화)
-    with st.sidebar:
-        st.header("메뉴")
-        st.button("운동 가이드", disabled=True, use_container_width=True)
-        
-        # 영상 표시 상태일 때만 운동하기 버튼 표시
-        if st.session_state.show_videos:
-            st.button("운동하기", on_click=go_to_exercise_view, type="primary", use_container_width=True)
-                
-    # 영상 보기 상태이면 영상 표시
-    if st.session_state.show_videos and st.session_state.selected_exercise:
-        display_exercise_videos(st.session_state.selected_exercise)
-            
+    # 운동 선택 섹션
+    st.header("운동 선택")
+    
     # 운동 목록 가져오기
     exercises_data = run_async(get_exercises())
-    if not exercises_data or "exercises" not in exercises_data:
-        st.error("운동 목록을 가져올 수 없습니다. 서버 연결을 확인해주세요.")
-        return
-    
-    exercises = exercises_data["exercises"]
-    
-    # 운동 선택 UI
-    st.header("운동 선택")
-    selected_exercise = st.selectbox(
-        "운동 선택",
-        options=exercises,
-        format_func=lambda x: f"{x['name']} ({x['difficulty']})",
-        key="exercise_select"
-    )
-    
-    if selected_exercise:
-        st.session_state.selected_exercise = selected_exercise
-        st.write(f"**설명:** {selected_exercise['description']}")
-        st.write(f"**난이도:** {selected_exercise['difficulty']}")
+    if exercises_data and "exercises" in exercises_data:
+        exercises = exercises_data["exercises"]
         
-        # 영상 보기/숨기기 버튼
-        button_text = "영상 숨기기" if st.session_state.show_videos else "영상 보기"
-        button_type = "secondary" if st.session_state.show_videos else "primary"
+        # 운동 선택 UI
+        selected_exercise = st.selectbox(
+            "운동 선택",
+            options=exercises,
+            format_func=lambda x: f"{x['name']} ({x['difficulty']})",
+            key="exercise_select"
+        )
         
-        if st.button(button_text, key="toggle_video_btn", type=button_type):
-            st.session_state.show_videos = not st.session_state.show_videos
-            st.rerun()
-
-
-# 영상 표시 함수 - 별도 함수로 분리
-def display_exercise_videos(exercise):
-    """운동 가이드 영상을 표시하는 함수"""
-    try:
-        st.header(f"{exercise['name']} 가이드 영상")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("정면 뷰")
-            front_video_url = f"{API_URL}/video{exercise['guide_videos']['front']}"
-            # 자동 재생 및 반복 재생을 위한 HTML 코드 사용
-            front_video_html = f"""
-            <video autoplay loop muted width="100%" controls>
-                <source src="{front_video_url}" type="video/mp4">
-                브라우저가 비디오 태그를 지원하지 않습니다.
-            </video>
-            """
-            st.components.v1.html(front_video_html, height=300)
-        
-        with col2:
-            st.subheader("측면 뷰")
-            side_video_url = f"{API_URL}/video{exercise['guide_videos']['side']}"
-            # 자동 재생 및 반복 재생을 위한 HTML 코드 사용
-            side_video_html = f"""
-            <video autoplay loop muted width="100%" controls>
-                <source src="{side_video_url}" type="video/mp4">
-                브라우저가 비디오 태그를 지원하지 않습니다.
-            </video>
-            """
-            st.components.v1.html(side_video_html, height=300)
-    except Exception as e:
-        st.error(f"영상을 표시하는 중 오류가 발생했습니다: {str(e)}")
-
-# 운동하기 페이지
-def exercise_view_page():
-    global selected_cameras
+        if selected_exercise:
+            st.write(f"**설명:** {selected_exercise['description']}")
+            st.write(f"**난이도:** {selected_exercise['difficulty']}")
+            
+            # 정답 영상 표시
+            st.header("정답 영상")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("정면")
+                front_video_path = f"komi_service{selected_exercise['guide_videos']['front']}"
+                front_video_bytes = load_video(front_video_path)
+                if front_video_bytes:
+                    st.video(front_video_bytes, format="video/mp4")
+                else:
+                    st.error("정면 영상을 불러올 수 없습니다.")
+            
+            with col2:
+                st.subheader("측면")
+                side_video_path = f"komi_service{selected_exercise['guide_videos']['side']}"
+                side_video_bytes = load_video(side_video_path)
+                if side_video_bytes:
+                    st.video(side_video_bytes, format="video/mp4")
+                else:
+                    st.error("측면 영상을 불러올 수 없습니다.")
     
-    if not st.session_state.selected_exercise:
-        st.warning("선택된 운동이 없습니다. 운동을 선택해주세요.")
-        st.button("운동 선택으로 돌아가기", on_click=go_to_exercise_select)
-        return
-    
-    exercise = st.session_state.selected_exercise
-    
-    # 사이드바에 운동 가이드 버튼
-    with st.sidebar:
-        st.header("메뉴")
-        st.button("운동 가이드", on_click=go_to_exercise_select, use_container_width=True)
-    
-    st.title(f"{exercise['name']} 운동")
-    st.caption(f"난이도: {exercise['difficulty']}")
+    # 카메라 연결 섹션
+    st.header("카메라 연결")
     
     # 서버 상태 확인
     if st.session_state.server_status is None:
@@ -884,172 +747,87 @@ def exercise_view_page():
         if st.button("새로고침"):
             st.session_state.cameras = get_cameras()
             st.rerun()
-        return
-        
-    # 카메라 선택 UI
-    st.header("카메라 선택")
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        front_camera = st.selectbox(
-            "프론트 카메라 선택",
-            ["선택 안함"] + st.session_state.cameras,
-            key="front_camera_select",
-            index=0 if st.session_state.front_camera == "선택 안함" else 
-                   ["선택 안함"] + st.session_state.cameras.index(st.session_state.front_camera) + 1
-        )
-        st.session_state.front_camera = front_camera
-    
-    with col2:
-        # 프론트 카메라를 선택한 경우, 해당 카메라를 사이드 카메라 목록에서 제외
-        available_side_cameras = ["선택 안함"] + [
-            cam for cam in st.session_state.cameras 
-            if front_camera == "선택 안함" or cam != front_camera
-        ]
-        side_camera = st.selectbox(
-            "사이드 카메라 선택",
-            available_side_cameras,
-            key="side_camera_select",
-            index=0 if st.session_state.side_camera == "선택 안함" or st.session_state.side_camera not in available_side_cameras else 
-                   available_side_cameras.index(st.session_state.side_camera)
-        )
-        st.session_state.side_camera = side_camera
-    
-    # 선택된 카메라 업데이트 - 선택된 카메라만 포함
-    selected_cameras_list = []
-    if st.session_state.front_camera != "선택 안함":
-        selected_cameras_list.append(st.session_state.front_camera)
-    if st.session_state.side_camera != "선택 안함":
-        selected_cameras_list.append(st.session_state.side_camera)
-    
-    if selected_cameras_list:
-        st.session_state.selected_cameras = selected_cameras_list
-        selected_cameras = selected_cameras_list
-        # 카메라 선택 변경 시 동기화 버퍼 초기화
-        init_sync_buffer(selected_cameras_list)
-    
-    # 포즈 표시 체크박스 제거 (포즈 표시는 항상 활성화)
-    st.session_state.show_pose_overlay = True
-    
-    if len(selected_cameras_list) == 0:
-        st.warning("선택된 카메라가 없습니다. 카메라를 선택해주세요.")
-        return
-    
-    # 웹캠 화면 표시
-    cols = st.columns(2)
-    image_slots = {}
-    status_slots = {}
-    connection_indicators = {}
-    pose_status_slots = {}
-    
-    # 프론트 카메라
-    with cols[0]:
-        st.subheader("프론트 뷰")
-        if st.session_state.front_camera != "선택 안함":
-            connection_indicators[st.session_state.front_camera] = st.empty()
-            image_slots[st.session_state.front_camera] = st.empty()
-            status_slots[st.session_state.front_camera] = st.empty()
-            pose_status_slots[st.session_state.front_camera] = st.empty()
-            status_slots[st.session_state.front_camera].text("실시간 스트리밍 준비 중...")
-        else:
-            st.info("프론트 카메라를 선택해주세요.")
-    
-    # 사이드 카메라
-    with cols[1]:
-        st.subheader("사이드 뷰")
-        if st.session_state.side_camera != "선택 안함":
-            connection_indicators[st.session_state.side_camera] = st.empty()
-            image_slots[st.session_state.side_camera] = st.empty()
-            status_slots[st.session_state.side_camera] = st.empty()
-            pose_status_slots[st.session_state.side_camera] = st.empty()
-            status_slots[st.session_state.side_camera].text("실시간 스트리밍 준비 중...")
-        else:
-            st.info("사이드 카메라를 선택해주세요.")
-    
-    # 별도 스레드 시작 (단 한번만)
-    if 'thread_started' not in st.session_state:
-        thread = threading.Thread(target=run_async_loop, daemon=True)
-        thread.start()
-        st.session_state.thread_started = True
-    
-    # 메인 UI 업데이트 루프
-    try:
-        update_interval = 0
-        while True:
-            update_interval += 1
-            update_ui = False
-            
-            if len(st.session_state.selected_cameras) > 1:
-                # 동기화된 프레임 찾기
-                sync_frames = find_synchronized_frames()
-                if sync_frames:
-                    # 동기화된 프레임이 있으면 UI 업데이트
-                    for camera_id, frame_data in sync_frames.items():
-                        st.session_state.camera_images[camera_id] = frame_data["image"]
-                        st.session_state.image_update_time[camera_id] = frame_data["time"]
-                    update_ui = True
-            else:
-                # 동기화 없이 각 카메라의 최신 프레임 사용
-                for camera_id in st.session_state.selected_cameras:
-                    if camera_id in image_queues and not image_queues[camera_id].empty():
-                        try:
-                            img_data = image_queues[camera_id].get(block=False)
-                            st.session_state.camera_images[camera_id] = img_data.get("image")
-                            st.session_state.image_update_time[camera_id] = img_data.get("time")
-                            update_ui = True
-                        except queue.Empty:
-                            pass
-            
-            # 이미지 업데이트
-            if update_ui:
-                for camera_id in st.session_state.selected_cameras:
-                    if camera_id in st.session_state.camera_images and camera_id in image_slots:
-                        img = st.session_state.camera_images[camera_id]
-                        if img is not None:
-                            # 포즈 오버레이가 활성화되고, 해당 카메라의 포즈 데이터가 있는 경우 오버레이
-                            if st.session_state.show_pose_overlay and camera_id in pose_data_store:
-                                # 포즈 데이터로 이미지 그리기
-                                img = draw_pose_on_image(img, pose_data_store[camera_id])
-                                
-                                # 포즈 상태 업데이트
-                                if camera_id in pose_update_times:
-                                    pose_time = pose_update_times[camera_id].strftime('%H:%M:%S.%f')[:-3]
-                                    pose_status_slots[camera_id].text(f"포즈 업데이트: {pose_time}")
-                            else:
-                                pose_status_slots[camera_id].text("")
-                            
-                            # 이미지 표시
-                            image_slots[camera_id].image(img, use_container_width=True)
-                            status_time = st.session_state.image_update_time[camera_id].strftime('%H:%M:%S.%f')[:-3]
-                            status_slots[camera_id].text(f"업데이트: {status_time}")
-            
-            # UI 업데이트 간격 (더 빠른 응답성)
-            time.sleep(0.05)
-    except Exception as e:
-        # 오류 표시 개선
-        st.error(f"오류가 발생했습니다. 페이지를 새로 고침해주세요.")
-
-# 서버 상태 확인 함수 추가
-async def check_server_health():
-    """서버 상태 확인"""
-    try:
-        session = await init_session()
-        async with session.get(f"{API_URL}/health") as response:
-            if response.status == 200:
-                return await response.json()
-            return {"status": "error", "message": f"상태 코드: {response.status}"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-# 메인 함수
-def main():
-    # 페이지 라우팅 - video_view 페이지 삭제
-    if st.session_state.page == 'exercise_select':
-        exercise_select_page()
-    elif st.session_state.page == 'exercise_view':
-        exercise_view_page()
     else:
-        exercise_select_page()
+        # 카메라 선택 UI
+        st.subheader("카메라 선택")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            front_camera = st.selectbox(
+                "프론트 카메라 선택",
+                ["선택 안함"] + st.session_state.cameras,
+                key="front_camera"
+            )
+        
+        with col2:
+            # 프론트 카메라를 선택한 경우, 해당 카메라를 사이드 카메라 목록에서 제외
+            available_side_cameras = ["선택 안함"] + [
+                cam for cam in st.session_state.cameras 
+                if front_camera == "선택 안함" or cam != front_camera
+            ]
+            side_camera = st.selectbox(
+                "사이드 카메라 선택",
+                available_side_cameras,
+                key="side_camera"
+            )
+        
+        # 선택된 카메라 업데이트 - 선택된 카메라만 포함
+        selected_cameras_list = []
+        if front_camera != "선택 안함":
+            selected_cameras_list.append(front_camera)
+        if side_camera != "선택 안함":
+            selected_cameras_list.append(side_camera)
+        
+        if selected_cameras_list:
+            st.session_state.selected_cameras = selected_cameras_list
+            selected_cameras = selected_cameras_list
+            # 카메라 선택 변경 시 동기화 버퍼 초기화
+            init_sync_buffer(selected_cameras_list)
+    
+    # 포즈 오버레이 설정
+    if st.session_state.selected_cameras:
+        show_pose = st.checkbox("포즈 표시", value=st.session_state.show_pose_overlay)
+        if show_pose != st.session_state.show_pose_overlay:
+            st.session_state.show_pose_overlay = show_pose
+        
+        # 프론트와 사이드 카메라 영상 표시
+        cols = st.columns(2)
+        image_slots = {}
+        status_slots = {}
+        connection_indicators = {}
+        pose_status_slots = {}
+        
+        # 프론트 카메라
+        with cols[0]:
+            st.subheader("프론트 뷰")
+            if front_camera != "선택 안함":
+                connection_indicators[front_camera] = st.empty()
+                image_slots[front_camera] = st.empty()
+                status_slots[front_camera] = st.empty()
+                pose_status_slots[front_camera] = st.empty()
+                status_slots[front_camera].text("실시간 스트리밍 준비 중...")
+            else:
+                st.info("프론트 카메라를 선택해주세요.")
+        
+        # 사이드 카메라
+        with cols[1]:
+            st.subheader("사이드 뷰")
+            if side_camera != "선택 안함":
+                connection_indicators[side_camera] = st.empty()
+                image_slots[side_camera] = st.empty()
+                status_slots[side_camera] = st.empty()
+                pose_status_slots[side_camera] = st.empty()
+                status_slots[side_camera].text("실시간 스트리밍 준비 중...")
+            else:
+                st.info("사이드 카메라를 선택해주세요.")
+
+# 동기화 버퍼 초기화
+def init_sync_buffer(camera_ids):
+    """동기화 버퍼 초기화 함수"""
+    global sync_buffer
+    for camera_id in camera_ids:
+        if camera_id not in sync_buffer:
+            sync_buffer[camera_id] = collections.deque(maxlen=SYNC_BUFFER_SIZE)
 
 # 애플리케이션 시작
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 from fastapi import FastAPI, WebSocket, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.staticfiles import StaticFiles as StarletteStaticFiles
 import asyncio
 import json
 import time
@@ -45,8 +46,8 @@ exercise_data = {
             "name": "스쿼트",
             "description": "기본적인 하체 운동",
             "guide_videos": {
-                "front": "/squat/front.mp4",
-                "side": "/squat/side.mp4"
+                "front": "/data/squat/front.mp4",
+                "side": "/data/squat/side.mp4"
             },
             "difficulty": "초급"
         },
@@ -55,8 +56,8 @@ exercise_data = {
             "name": "푸시업",
             "description": "상체 근력 운동",
             "guide_videos": {
-                "front": "/pushup/front.mp4",
-                "side": "/pushup/side.mp4"
+                "front": "/data/pushup/front.mp4",
+                "side": "/data/pushup/side.mp4"
             },
             "difficulty": "중급"
         },
@@ -65,8 +66,8 @@ exercise_data = {
             "name": "런지",
             "description": "하체 균형 운동",
             "guide_videos": {
-                "front": "/lunge/front.mp4",
-                "side": "/lunge/side.mp4"
+                "front": "/data/lunge/front.mp4",
+                "side": "/data/lunge/side.mp4"
             },
             "difficulty": "중급"
         }
@@ -85,6 +86,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# 정적 파일 서빙 설정
+data_directory = os.path.join(os.getcwd(), "komi_service", "data")
+if not os.path.exists(data_directory):
+    os.makedirs(data_directory, exist_ok=True)
+
+# 정적 파일 서빙 설정
+app.mount("/data", StaticFiles(directory=data_directory), name="data")
+
 # CORS 설정
 app.add_middleware(
     CORSMiddleware,
@@ -93,14 +102,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# 정적 파일 서빙 설정
-data_directory = os.path.join(os.getcwd(), "komi_service", "data")
-if not os.path.exists(data_directory):
-    os.makedirs(data_directory, exist_ok=True)
-
-# 정적 파일 서빙 설정
-app.mount("/data", StaticFiles(directory=data_directory), name="data")
 
 # 헬스 체크 엔드포인트
 @app.get("/health")
@@ -750,14 +751,13 @@ async def get_video_info(video_path: str):
             "message": f"파일 정보 확인 중 오류 발생: {str(e)}"
         }
 
-# 비디오 파일 직접 서빙 엔드포인트
+# 비디오 파일 직접 서빙 엔드포인트 추가
 @app.get("/video/{video_path:path}")
 async def get_video(video_path: str, range: str = Header(None)):
     """비디오 파일 직접 서빙 (스트리밍 지원)"""
     file_path = os.path.join(data_directory, video_path)
     
     if not os.path.exists(file_path):
-        print(f"파일을 찾을 수 없습니다: {file_path}")
         return Response(
             content=f"파일을 찾을 수 없습니다: {video_path}",
             status_code=404
