@@ -171,19 +171,54 @@ while time.time() - countdown_start < 5:
 
 # 2.9초간 녹화
 record_start_time = time.time()
+frame_count = 0
 while cap.isOpened():
     ret, frame = cap.read()
     frame = cv2.flip(frame, 1)
     if not ret:
         break
+
+    # 영상 저장은 원본 기준으로 진행
     if time.time() - record_start_time <= 2.9:
         out.write(frame)
+
+        # 실시간 디텍팅은 화면에만 출력한다.
+        if frame_count % 1 == 0:
+            results = yolo_model.predict(source=frame, stream = False, verbose = False)
+            for result in results:
+                if result.keypoints is not None:
+                    keypoints = result.keypoints.xy.cpu().numpy()[0]
+                    
+                    # 각 관절 포인트 시각화
+                    for x, y in keypoints:
+                        if x > 0 and y > 0:
+                            cv2.circle(frame, (int(x), int(y)), 5, (0, 255, 0), -1)
+
+                    # 관절 포인트 기반 라인 시각화
+                    skeleton = [
+                        (5, 7), (7, 9), (6, 8), (8, 10),  # 팔 (오른쪽, 왼쪽)
+                        (11, 13), (13, 15), (12, 14), (14, 16),  # 다리 (오른쪽, 왼쪽)
+                        (5, 6), (11, 12), (5, 11), (6, 12)  # 몸통 연결
+                    ]
+
+                    for j1, j2 in skeleton:
+                        x1, y1 = keypoints[j1]
+                        x2, y2 = keypoints[j2]
+                        if x1 > 0 and y1 > 0 and x2 > 0 and y2 > 0:     # 값이 존재할 때만
+                            pt1 = (int(x1), int(y1))
+                            pt2 = (int(x2), int(y2))
+                            cv2.line(frame, pt1, pt2, (0, 255, 0), 2)    # 초록색 선으로 표시
+
+        cv2.imshow('실시간 감지중', frame)
+        frame_count += 1
+
     else:
         print("2.9초 녹화 완료. 영상 저장 종료.")
         break
     cv2.imshow('Recording Video', frame)
     if cv2.waitKey(1) == 27:
         break
+
 cap.release()
 out.release()
 cv2.destroyAllWindows()
