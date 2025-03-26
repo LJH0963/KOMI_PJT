@@ -2,8 +2,8 @@ import cv2
 import os
 
 # 이미지가 저장된 폴더 경로
-image_folder = 'C:/Users/user/Desktop/img_output/squat/front'
-video_name = 'C:/WANTED/LLM/KOMI_PJT/LLM_Project/LJH/data/video/output_video.mp4'
+image_folder = 'C:/Users/user/Desktop/img_output/squat/side/for_upload'
+video_name = 'C:/WANTED/LLM/KOMI_PJT/LLM_Project/LJH/data/video/output_video_side.mp4'
 
 # 이미지 크기 설정 (이미지들이 동일한 크기여야 함)
 frame = cv2.imread(os.path.join(image_folder, os.listdir(image_folder)[0]))
