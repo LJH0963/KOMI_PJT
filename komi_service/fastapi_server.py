@@ -199,6 +199,46 @@ async def broadcast_image_to_subscribers(camera_id: str, image_data: str, timest
             if camera_id in camera_info and "subscribers" in camera_info[camera_id]:
                 camera_info[camera_id]["subscribers"] -= dead_connections
 
+# WebSocket 구독자에게 포즈 데이터 브로드캐스트
+async def broadcast_pose_to_subscribers(camera_id: str, pose_data: dict, timestamp: datetime):
+    """WebSocket 구독자들에게 포즈 데이터 직접 전송"""
+    if camera_id not in camera_info or "subscribers" not in camera_info[camera_id]:
+        return
+    
+    # 메시지 준비
+    message = {
+        "type": "pose_data",
+        "camera_id": camera_id,
+        "pose_data": pose_data,
+        "timestamp": timestamp.isoformat()
+    }
+    
+    # 직렬화
+    message_str = json.dumps(message)
+    
+    # 구독자 목록 복사 (비동기 처리 중 변경될 수 있음)
+    with data_lock:
+        if camera_id in camera_info and "subscribers" in camera_info[camera_id]:
+            subscribers = camera_info[camera_id]["subscribers"].copy()
+        else:
+            return
+    
+    # 끊어진 연결 추적
+    dead_connections = set()
+    
+    # 모든 구독자에게 전송
+    for websocket in subscribers:
+        try:
+            await websocket.send_text(message_str)
+        except Exception:
+            dead_connections.add(websocket)
+    
+    # 끊어진 연결 정리
+    if dead_connections:
+        with data_lock:
+            if camera_id in camera_info and "subscribers" in camera_info[camera_id]:
+                camera_info[camera_id]["subscribers"] -= dead_connections
+
 # 웹소켓 클라이언트 알림 함수
 async def notify_clients(camera_id: str):
     """웹소켓 클라이언트에게 이미지 업데이트 알림"""
@@ -407,6 +447,33 @@ async def camera_websocket(websocket: WebSocket):
                             # 일반 웹소켓 클라이언트에게 알림
                             await notify_clients(camera_id)
                     
+                    elif msg_type == "pose_data":
+                        # 포즈 데이터 처리
+                        pose_data = data.get("pose_data")
+                        image_data = data.get("image_data")
+                        if pose_data:
+                            timestamp = datetime.now()
+                            last_seen = timestamp
+                            
+                            # 포즈 데이터와 이미지를 함께 저장하는 경우
+                            if image_data:
+                                with data_lock:
+                                    latest_image_data[camera_id] = image_data
+                                    latest_timestamps[camera_id] = timestamp
+                                    
+                                    # 카메라 상태 업데이트
+                                    if camera_id in camera_info:
+                                        camera_info[camera_id]["last_seen"] = timestamp
+                                
+                                # 구독자에게 이미지 직접 전송
+                                await broadcast_image_to_subscribers(camera_id, image_data, timestamp)
+                            
+                            # 구독자에게 포즈 데이터 전송
+                            await broadcast_pose_to_subscribers(camera_id, pose_data, timestamp)
+                            
+                            # 일반 웹소켓 클라이언트에게 알림
+                            await notify_clients(camera_id)
+                    
                     elif msg_type == "disconnect":
                         # 클라이언트에서 종료 요청 - 정상 종료
                         print(f"카메라 {camera_id}에서 연결 종료 요청을 받음")
@@ -488,6 +555,38 @@ async def stream_camera(websocket: WebSocket, camera_id: str):
                         "timestamp": timestamp.isoformat()
                     })
         
+        # 연결 유지 루프 - 개선된 함수 사용
+        if not await keep_websocket_alive(websocket):
+            # 연결 유지 실패
+            pass
+    except Exception:
+        # 예외 처리 - 조용히 진행
+        pass
+    finally:
+        # 구독 목록에서 제거
+        with data_lock:
+            if camera_id in camera_info and "subscribers" in camera_info[camera_id]:
+                camera_info[camera_id]["subscribers"].discard(websocket)
+
+# 포즈 스트리밍 위한 WebSocket 엔드포인트
+@app.websocket("/ws/pose/{camera_id}")
+async def stream_pose(websocket: WebSocket, camera_id: str):
+    """특정 카메라의 포즈 데이터를 WebSocket으로 스트리밍"""
+    await websocket.accept()
+    
+    # 해당 카메라가 존재하는지 확인
+    if camera_id not in camera_info:
+        await websocket.close(code=1008, reason=f"카메라 ID {camera_id}를 찾을 수 없습니다")
+        return
+    
+    # 해당 카메라의 실시간 스트리밍을 구독하는 클라이언트 등록
+    with data_lock:
+        if "subscribers" not in camera_info[camera_id]:
+            camera_info[camera_id]["subscribers"] = set()
+        
+        camera_info[camera_id]["subscribers"].add(websocket)
+    
+    try:
         # 연결 유지 루프 - 개선된 함수 사용
         if not await keep_websocket_alive(websocket):
             # 연결 유지 실패

@@ -48,6 +48,10 @@ MAX_SYNC_DIFF_MS = 100  # 프레임 간 최대 허용 시간 차이 (밀리초)
 # WebSocket 연결 상태
 ws_connection_status = {}  # 카메라ID -> 상태 ("connected", "disconnected", "reconnecting")
 
+# 포즈 데이터 저장소
+pose_data_store = {}  # 카메라ID -> 최신 포즈 데이터
+pose_update_times = {}  # 카메라ID -> 마지막 포즈 업데이트 시간
+
 # 스레드별 전용 세션과 이벤트 루프
 thread_local = threading.local()
 
@@ -69,6 +73,10 @@ if 'sync_status' not in st.session_state:
     st.session_state.sync_status = "준비 중..."
 if 'connection_status' not in st.session_state:
     st.session_state.connection_status = {}
+if 'pose_data' not in st.session_state:
+    st.session_state.pose_data = {}
+if 'show_pose_overlay' not in st.session_state:
+    st.session_state.show_pose_overlay = True
 
 # Base64 이미지 디코딩 함수
 def decode_image(base64_image):
@@ -291,6 +299,7 @@ async def update_images():
     
     # 카메라별 WebSocket 연결 태스크 저장
     stream_tasks = {}
+    pose_stream_tasks = {}  # 포즈 스트림 태스크
     
     try:
         while is_running:
@@ -312,14 +321,31 @@ async def update_images():
                             stream_tasks[camera_id].cancel()
                         del stream_tasks[camera_id]
                 
+                # 포즈 스트림 중 필요없는 것 종료
+                for camera_id in list(pose_stream_tasks.keys()):
+                    if camera_id not in camera_ids:
+                        if not pose_stream_tasks[camera_id].done():
+                            pose_stream_tasks[camera_id].cancel()
+                        del pose_stream_tasks[camera_id]
+                
                 # 새 카메라에 대한 WebSocket 스트림 시작
                 for camera_id in camera_ids:
+                    # 이미지 스트림
                     if camera_id not in stream_tasks or stream_tasks[camera_id].done():
                         # 재연결 시도할 때 약간의 지연 추가 (무작위)
                         jitter = random.uniform(0, 0.5)
                         await asyncio.sleep(jitter)
                         stream_tasks[camera_id] = asyncio.create_task(
                             connect_to_camera_stream(camera_id)
+                        )
+                    
+                    # 포즈 데이터 스트림
+                    if camera_id not in pose_stream_tasks or pose_stream_tasks[camera_id].done():
+                        # 재연결 시도할 때 약간의 지연 추가 (무작위)
+                        jitter = random.uniform(0, 0.5)
+                        await asyncio.sleep(jitter)
+                        pose_stream_tasks[camera_id] = asyncio.create_task(
+                            connect_to_pose_stream(camera_id)
                         )
             
             # 요청 간격 조절
@@ -332,7 +358,7 @@ async def update_images():
         pass
     finally:
         # 모든 스트림 태스크 취소
-        for task in stream_tasks.values():
+        for task in list(stream_tasks.values()) + list(pose_stream_tasks.values()):
             if not task.done():
                 task.cancel()
         
@@ -497,6 +523,158 @@ async def connect_to_camera_stream(camera_id):
     
     return False
 
+# 포즈 데이터를 이미지에 그리는 함수
+def draw_pose_on_image(image, pose_data):
+    """포즈 데이터를 이미지에 시각화"""
+    if image is None or pose_data is None:
+        return image
+    
+    try:
+        # 이미지 복사
+        img_copy = image.copy()
+        
+        # 키포인트 그리기
+        keypoints = pose_data.get("keypoints", [])
+        if not keypoints or len(keypoints) == 0:
+            return image
+        
+        # 첫 번째 사람의 키포인트만 사용 (여러 명이 감지된 경우)
+        person_keypoints = keypoints[0]
+        
+        # 색상 정의 (RGB)
+        keypoint_color = (255, 0, 0)  # 빨간색
+        skeleton_color = (0, 255, 0)  # 녹색
+        
+        # 각 키포인트 그리기
+        for kp in person_keypoints:
+            if kp.get("x") is not None and kp.get("y") is not None:
+                if kp.get("confidence", 0) > 0.5:  # 높은 신뢰도의 키포인트만
+                    x, y = int(kp["x"]), int(kp["y"])
+                    cv2.circle(img_copy, (x, y), 5, keypoint_color, -1)
+        
+        # COCO 데이터셋 기준 스켈레톤 연결 정의
+        skeleton = [
+            (5, 7), (7, 9), (6, 8), (8, 10),  # 팔 (좌우)
+            (11, 13), (13, 15), (12, 14), (14, 16),  # 다리 (좌우)
+            (5, 6), (11, 12), (5, 11), (6, 12)  # 몸통
+        ]
+        
+        coco_keypoints = [
+            "nose", "left_eye", "right_eye", "left_ear", "right_ear",
+            "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
+            "left_wrist", "right_wrist", "left_hip", "right_hip",
+            "left_knee", "right_knee", "left_ankle", "right_ankle"
+        ]
+        
+        # 키포인트 부위별 딕셔너리 생성
+        kp_dict = {kp["part"]: kp for kp in person_keypoints}
+        
+        # 스켈레톤 그리기
+        for joint1_idx, joint2_idx in skeleton:
+            joint1_name = coco_keypoints[joint1_idx]
+            joint2_name = coco_keypoints[joint2_idx]
+            
+            joint1 = kp_dict.get(joint1_name, {})
+            joint2 = kp_dict.get(joint2_name, {})
+            
+            if (joint1.get("x") is not None and joint1.get("y") is not None and 
+                joint2.get("x") is not None and joint2.get("y") is not None and
+                joint1.get("confidence", 0) > 0.5 and joint2.get("confidence", 0) > 0.5):
+                cv2.line(img_copy, 
+                        (int(joint1["x"]), int(joint1["y"])), 
+                        (int(joint2["x"]), int(joint2["y"])), 
+                        skeleton_color, 2)
+        
+        return img_copy
+    except Exception as e:
+        print(f"포즈 그리기 오류: {str(e)}")
+        return image
+
+# 포즈 데이터 WebSocket 연결 및 수신
+async def connect_to_pose_stream(camera_id):
+    """WebSocket을 통해 카메라의 포즈 데이터 스트림에 연결"""
+    global connection_attempts
+    
+    # 연결 상태 업데이트
+    update_connection_status(camera_id, "reconnecting")
+    
+    try:
+        session = await init_session()
+        # WebSocket URL 구성
+        ws_url = f"{API_URL.replace('http://', 'ws://')}/ws/pose/{camera_id}"
+        
+        # 향상된 WebSocket 옵션
+        heartbeat = 30.0  # 30초 핑/퐁
+        ws_timeout = aiohttp.ClientWSTimeout(ws_close=60.0)
+        
+        async with session.ws_connect(
+            ws_url, 
+            heartbeat=heartbeat,
+            timeout=ws_timeout,
+            max_msg_size=0,
+            compress=False
+        ) as ws:
+            # 연결 성공 - 상태 업데이트
+            update_connection_status(camera_id, "connected")
+            connection_attempts[camera_id] = 0
+            
+            last_ping_time = time.time()
+            ping_interval = 25  # 25초마다 핑 전송
+            
+            while is_running:
+                # 핑 전송 (주기적으로)
+                current_time = time.time()
+                if current_time - last_ping_time >= ping_interval:
+                    try:
+                        await ws.ping()
+                        last_ping_time = current_time
+                    except:
+                        # 핑 실패 시 루프 탈출하여 재연결
+                        break
+                
+                # 데이터 수신
+                try:
+                    msg = await asyncio.wait_for(ws.receive(), timeout=0.1)
+                    
+                    if msg.type == aiohttp.WSMsgType.CLOSED:
+                        break
+                    elif msg.type == aiohttp.WSMsgType.ERROR:
+                        break
+                    elif msg.type == aiohttp.WSMsgType.TEXT:
+                        # 핑/퐁 처리
+                        if msg.data == "ping":
+                            await ws.send_str("pong")
+                            continue
+                        elif msg.data == "pong":
+                            continue
+                        
+                        # JSON 메시지 처리
+                        try:
+                            data = json.loads(msg.data)
+                            if data.get("type") == "pose_data":
+                                # 포즈 데이터 처리
+                                pose_data = data.get("pose_data")
+                                timestamp = datetime.fromisoformat(data.get("timestamp", datetime.now().isoformat()))
+                                
+                                if pose_data:
+                                    # 포즈 데이터 저장
+                                    pose_data_store[camera_id] = pose_data
+                                    pose_update_times[camera_id] = timestamp
+                        except json.JSONDecodeError:
+                            # JSON 오류 무시
+                            pass
+                except asyncio.TimeoutError:
+                    # 타임아웃은 정상이므로 무시
+                    pass
+    except Exception:
+        # 연결 오류
+        update_connection_status(camera_id, "disconnected")
+    
+    # 함수 종료시 연결 해제 상태로 설정
+    update_connection_status(camera_id, "disconnected")
+    
+    return False
+
 # 메인 UI
 def main():
     global selected_cameras, is_running
@@ -543,14 +721,19 @@ def main():
             # 카메라 선택 변경 시 동기화 버퍼 초기화
             init_sync_buffer(selected)
     
-    # 동기화 설정
-    col1, col2 = st.columns([3, 1])
+    # 동기화 및 포즈 오버레이 설정
+    col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
-        # 비어있는 텍스트 표시 (동기화 상태 준비 중 메시지 제거)
+        # 비어있는 텍스트 표시
         st.caption("")
     with col2:
         # 체크박스 제거하고 동기화는 항상 활성화
         use_sync = True
+    with col3:
+        # 포즈 오버레이 토글
+        show_pose = st.checkbox("포즈 표시", value=st.session_state.show_pose_overlay)
+        if show_pose != st.session_state.show_pose_overlay:
+            st.session_state.show_pose_overlay = show_pose
     
     # 두 개의 열로 이미지 배치
     if st.session_state.selected_cameras:
@@ -558,6 +741,7 @@ def main():
         image_slots = {}
         status_slots = {}
         connection_indicators = {}
+        pose_status_slots = {}  # 포즈 상태 표시 슬롯
         
         # 각 카메라별 이미지 슬롯 생성
         for i, camera_id in enumerate(st.session_state.selected_cameras[:2]):
@@ -571,6 +755,7 @@ def main():
                 
                 image_slots[camera_id] = st.empty()
                 status_slots[camera_id] = st.empty()
+                pose_status_slots[camera_id] = st.empty()  # 포즈 상태 슬롯 추가
                 status_slots[camera_id].text("실시간 스트리밍 준비 중...")
     
     # 별도 스레드 시작 (단 한번만)
@@ -613,6 +798,19 @@ def main():
                     if camera_id in st.session_state.camera_images:
                         img = st.session_state.camera_images[camera_id]
                         if img is not None:
+                            # 포즈 오버레이가 활성화되고, 해당 카메라의 포즈 데이터가 있는 경우 오버레이
+                            if st.session_state.show_pose_overlay and camera_id in pose_data_store:
+                                # 포즈 데이터로 이미지 그리기
+                                img = draw_pose_on_image(img, pose_data_store[camera_id])
+                                
+                                # 포즈 상태 업데이트
+                                if camera_id in pose_update_times:
+                                    pose_time = pose_update_times[camera_id].strftime('%H:%M:%S.%f')[:-3]
+                                    pose_status_slots[camera_id].text(f"포즈 업데이트: {pose_time}")
+                            else:
+                                pose_status_slots[camera_id].text("")
+                            
+                            # 이미지 표시
                             image_slots[camera_id].image(img, use_container_width=True)
                             status_time = st.session_state.image_update_time[camera_id].strftime('%H:%M:%S.%f')[:-3]
                             status_slots[camera_id].text(f"업데이트: {status_time}")

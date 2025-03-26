@@ -11,6 +11,9 @@ import signal
 from datetime import datetime, timedelta
 import random
 
+# YOLO11 포즈 감지 모듈 임포트
+from pose_detection.yolo_model import YoloPoseModel
+
 # 스레드별 전용 세션과 이벤트 루프
 thread_local = threading.local()
 
@@ -21,6 +24,11 @@ server_time_offset = 0.0  # 서버와의 시간차 (초 단위)
 ws_connections = {}  # 카메라 ID -> WebSocket 연결
 connection_status = {}  # 카메라 ID -> 연결 상태 ("connected", "connecting", "disconnected")
 last_ping_times = {}  # 카메라 ID -> 마지막 핑 전송 시간
+
+# 포즈 감지 관련 설정
+POSE_DETECTION_ENABLED = False  # 포즈 감지 활성화 여부
+POSE_DETECTION_INTERVAL = 1.0  # 포즈 감지 간격 (초)
+pose_model = None  # 포즈 감지 모델 인스턴스
 
 # WebSocket 연결 설정
 MAX_RECONNECT_ATTEMPTS = 3  # 최대 재연결 시도 횟수
@@ -334,7 +342,66 @@ async def send_frame_via_websocket(camera_id, image_data, timestamp):
         update_connection_status(camera_id, "disconnected")
         return False
 
-# 메인 카메라 처리 루프
+# 포즈 감지 모델 초기화 함수
+def init_pose_model(model_path=None):
+    """포즈 감지 모델 초기화"""
+    global pose_model
+    
+    try:
+        # 지정된 모델 경로가 없으면 기본 모델 사용
+        if not model_path:
+            # 기본 모델 경로 설정
+            model_path = "yolo11x-pose.pt"
+            
+            # 모델 파일이 존재하는지 확인
+            if not os.path.exists(model_path):
+                print(f"경고: 모델 파일({model_path})을 찾을 수 없습니다.")
+        
+        # 포즈 감지 모델 초기화
+        pose_model = YoloPoseModel(model_path)
+        
+        if pose_model.is_loaded:
+            print("포즈 감지 모델 초기화 성공")
+            return True
+        else:
+            print("포즈 감지 모델 초기화 실패")
+            return False
+    except Exception as e:
+        print(f"포즈 감지 모델 초기화 오류: {str(e)}")
+        return False
+
+# WebSocket을 통한 포즈 데이터 전송
+async def send_pose_data_via_websocket(camera_id, image_data, pose_data, timestamp):
+    """WebSocket을 통해 포즈 데이터 전송"""
+    if camera_id not in ws_connections:
+        return False
+    
+    try:
+        ws = ws_connections[camera_id]
+        
+        # 포즈 데이터 메시지 생성
+        pose_msg = {
+            "type": "pose_data",
+            "camera_id": camera_id,
+            "image_data": image_data,  # 원본 이미지도 함께 전송
+            "pose_data": pose_data,    # 포즈 키포인트
+            "timestamp": timestamp.isoformat()
+        }
+        
+        # 메시지 전송
+        await ws.send_json(pose_msg)
+        return True
+            
+    except Exception as e:
+        print(f"포즈 데이터 전송 오류: {str(e)}")
+        
+        # 연결 오류 시 상태 업데이트
+        if camera_id in ws_connections:
+            del ws_connections[camera_id]
+        update_connection_status(camera_id, "disconnected")
+        return False
+
+# 메인 카메라 처리 루프 수정
 async def camera_loop(camera_id, camera, quality=85, max_width=640, flip=False):
     """단일 카메라 처리 비동기 루프"""
     # 카메라 정보 구성
@@ -355,6 +422,7 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640, flip=False):
     last_sync_time = time.time()
     last_ping_time = time.time()
     last_frame_time = datetime.now()
+    last_pose_time = datetime.now()  # 마지막 포즈 감지 시간
     
     # 최초 웹소켓 연결
     if not await connect_camera_websocket(camera_id, camera_info):
@@ -369,9 +437,9 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640, flip=False):
                     await asyncio.sleep(2.0)
                     continue
             
-            # 주기적으로 서버 시간 동기화 (5분마다)
+            # 주기적으로 서버 시간 동기화 (30초마다)
             current_time = time.time()
-            if current_time - last_sync_time >= 300:
+            if current_time - last_sync_time >= 30:
                 await sync_server_time()
                 last_sync_time = current_time
             
@@ -398,6 +466,7 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640, flip=False):
             # 현재 시간과 마지막 프레임 전송 시간의 차이 계산
             current_time = datetime.now()
             time_diff = (current_time - last_frame_time).total_seconds()
+            pose_time_diff = (current_time - last_pose_time).total_seconds()
             
             # 지정된 FPS에 따라 이미지 업로드
             if time_diff >= frame_interval:
@@ -408,7 +477,23 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640, flip=False):
                     # 서버 시간 기준으로 타임스탬프 생성
                     server_timestamp = get_server_time()
                     
-                    # WebSocket을 통해 이미지 전송
+                    # 포즈 감지 활성화 상태이고 포즈 감지 간격이 지났으면 포즈 감지 수행
+                    if POSE_DETECTION_ENABLED and pose_model and pose_time_diff >= POSE_DETECTION_INTERVAL:
+                        try:
+                            # flip 옵션이 활성화된 경우 좌우 반전된 프레임 생성
+                            detection_frame = cv2.flip(frame, 1) if flip else frame
+                            
+                            # 좌우 반전된 프레임으로 포즈 감지 수행
+                            pose_data = pose_model.detect_pose(detection_frame)
+                            
+                            # 포즈 데이터 전송
+                            if "error" not in pose_data:
+                                await send_pose_data_via_websocket(camera_id, image_data, pose_data, server_timestamp)
+                                last_pose_time = current_time
+                        except Exception as e:
+                            print(f"포즈 감지 오류: {str(e)}")
+                    
+                    # 일반 이미지 데이터 전송 (포즈 감지와 별개로 항상 전송)
                     if await send_frame_via_websocket(camera_id, image_data, server_timestamp):
                         last_frame_time = current_time
                     
@@ -458,10 +543,10 @@ def run_camera_thread(camera_id, camera_index, fps=15, quality=85, max_width=640
         except Exception as e:
             print(f"세션 정리 오류: {str(e)}")
 
-# 메인 함수
+# 메인 함수 수정
 def main():
     """메인 프로그램"""
-    global running, api_url, FLIP_HORIZONTAL
+    global running, api_url, FLIP_HORIZONTAL, POSE_DETECTION_ENABLED, POSE_DETECTION_INTERVAL
     
     # 인자 파서 설정
     parser = argparse.ArgumentParser(description="KOMI 웹캠 클라이언트")
@@ -477,11 +562,19 @@ def main():
                         help='카메라 프레임 레이트 (기본값: 15)')
     parser.add_argument('--flip', action='store_false',
                         help='카메라 이미지 좌우 반전 비활성화')
+    parser.add_argument('--pose-detection', action='store_true',
+                        help='포즈 감지 활성화')
+    parser.add_argument('--pose-interval', type=float, default=1.0,
+                        help='포즈 감지 간격 (초, 기본값: 1.0)')
+    parser.add_argument('--model-path', type=str, default=None,
+                        help='YOLO 포즈 감지 모델 경로')
     
     # 인자 파싱
     args = parser.parse_args()
     api_url = args.server
     FLIP_HORIZONTAL = args.flip
+    POSE_DETECTION_ENABLED = args.pose_detection
+    POSE_DETECTION_INTERVAL = args.pose_interval
     
     # 압축 품질 범위 확인
     quality = max(1, min(100, args.quality))  # 1-100 범위로 제한
@@ -495,6 +588,15 @@ def main():
     print(f"최대 이미지 폭: {max_width}px")
     if FLIP_HORIZONTAL:
         print("카메라 이미지 좌우 반전: 활성화")
+    
+    # 포즈 감지 설정
+    if POSE_DETECTION_ENABLED:
+        print(f"포즈 감지: 활성화 (간격: {POSE_DETECTION_INTERVAL}초)")
+        if not init_pose_model(args.model_path):
+            print("포즈 감지 비활성화됨")
+            POSE_DETECTION_ENABLED = False
+    else:
+        print("포즈 감지: 비활성화")
     
     # 종료 시그널 핸들러 등록
     signal.signal(signal.SIGINT, handle_exit)

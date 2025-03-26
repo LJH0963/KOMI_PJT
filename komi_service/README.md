@@ -13,9 +13,9 @@ KOMI(Kinematic Optimization & Motion Intelligence) 서비스는 포즈 감지 �
 ## 시스템 구성
 
 ### 핵심 구성요소
-- FastAPI 백엔드 서버 (WebSocket 지원)
 - YOLO11 기반 포즈 감지 엔진
 - Ollama 기반 LLM 모듈
+- FastAPI 백엔드 서버 (WebSocket 지원)
 - 웹캠 클라이언트-서버 통신 모듈
 - Streamlit 사용자 인터페이스
 
@@ -29,7 +29,7 @@ komi_service/
 │   ├── yolo_model.py     # YOLO11 포즈 감지 모델
 │   └── pose_analyzer.py  # 자세 분석 알고리즘
 └── llm/               # LLM 모듈 (개발 예정)
-    ├── ollama_client.py  # Ollama 기반 LLM 통신
+    ├── ollama_runner.py   # Ollama 모델을 실행
     └── medical_advisor.py # 의료 상담 및 운동 추천 엔진
 ```
 
@@ -114,6 +114,8 @@ python komi_service/webcam_client.py --cameras camera_12346:0 --server "http://l
 | `--quality` | 이미지 압축 품질 (0-100) | 85 |
 | `--max-width` | 이미지 최대 폭 (픽셀) | 640 |
 | `--fps` | 카메라 프레임 레이트 | 15 |
+| `--pose-detection` | 실시간 포즈 디텍션 활성화 | False |
+| `--pose-interval` | 실시간 포즈 디텍션 간격 | 1 |
 
 ### 3. Streamlit 앱 실행
 ```bash
@@ -225,4 +227,4 @@ python komi_service/webcam_client.py --cameras camera_12346:0 --server http://19
 - 자세 분석 알고리즘 개발 (cosine similarity / angle based evaluation)
 - 운동 가이드 영상과 사용자 자세 비교 기능 추가
 - Ollama 기반 LLM 연동 및 분석 결과에 기반한 맞춤형 피드백 기능 구현
-- 재활 운동 추천 및 자세 교정 가이드 제공 기능 개발
+- 자세 교정 가이드 제공 기능 개발
