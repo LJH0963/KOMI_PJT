@@ -60,18 +60,38 @@ yolo_model = YOLO("yolo11x-pose.pt")
 # 기준 마스크 이미지 및 keypoint 로딩
 mask_image_path = 'C:/Users/user/Desktop/data/frame100_mask_rgba.png'
 mask = cv2.imread(mask_image_path, cv2.IMREAD_UNCHANGED)
+print("mask shape:", mask.shape)
 if mask is None:
     print("마스크 이미지를 찾을 수 없습니다.")
     exit()
 reference_pose = load_reference_pose("C:/Users/user/Desktop/img_output/squat/front_json/json/frame100.json")
 
-# 마스크 오버레이 함수
-def overlay_mask(frame, mask):
+# 마스크 오버레이 함수 (반투명 적용)
+def overlay_mask(frame, mask, alpha_value=100):
     mask_resized = cv2.resize(mask, (frame.shape[1], frame.shape[0]))
-    alpha_mask = mask_resized[:, :, 3] / 255.0
+
+    if mask_resized.shape[2] != 4:
+        raise ValueError(f"Resized mask expected 4 channels (RGBA), got {mask_resized.shape[2]}")
+
+    mask_rgb = mask_resized[:, :, :3].astype(np.uint8)
+    mask_alpha = mask_resized[:, :, 3].astype(np.uint8)
+
+    object_mask = (mask_alpha > 0).astype(np.uint8)
+
+    custom_alpha = np.full_like(mask_alpha, alpha_value, dtype=np.uint8)
+    custom_alpha[object_mask == 0] = 0
+
+    frame_rgba = cv2.cvtColor(frame, cv2.COLOR_BGR2BGRA)
+
     for c in range(3):
-        frame[:, :, c] = frame[:, :, c] * (1 - alpha_mask) + mask_resized[:, :, c] * alpha_mask
-    return frame
+        frame_rgba[:, :, c] = (
+            frame_rgba[:, :, c] * (1 - custom_alpha / 255.0) +
+            mask_rgb[:, :, c] * (custom_alpha / 255.0)
+        ).astype(np.uint8)
+
+    frame_rgba[:, :, 3] = np.maximum(frame_rgba[:, :, 3], custom_alpha)
+
+    return cv2.cvtColor(frame_rgba, cv2.COLOR_BGRA2BGR)
 
 # 마스크 기반 정렬 판단 함수
 def is_pose_aligned(keypoints, mask, threshold_ratio=0.3):
