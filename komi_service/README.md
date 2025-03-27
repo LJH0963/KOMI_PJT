@@ -98,13 +98,13 @@ komi_service/
 ### 1. FastAPI 서버 실행
 
 ```bash
-uvicorn komi_service.fastapi_server:app --host 0.0.0.0 --port 8000
+uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 
 ### 2. 웹캠 클라이언트 실행
 ```bash
-python komi_service/webcam_client.py --cameras camera_12346:0 --server "http://localhost:8000" --fps 15 --quality 85 --max-width 640
+python webcam_client.py --cameras camera_12346:0 --server "http://localhost:8000" --fps 15 --quality 85 --max-width 640
 ```
 
 | 옵션 | 설명 | 기본값 |
@@ -119,7 +119,7 @@ python komi_service/webcam_client.py --cameras camera_12346:0 --server "http://l
 
 ### 3. Streamlit 앱 실행
 ```bash
-streamlit run komi_service/streamlit_app.py
+streamlit run frontend/app.py
 ```
 
 Streamlit 앱은 기본적으로 웹 브라우저를 열고 http://localhost:8501 에서 실행됩니다.
@@ -216,9 +216,9 @@ KOMI 서비스는 asyncio와 WebSocket을 활용한 비동기 처리를 통해 �
 
 #### 다중 카메라 테스트
 ```
-uvicorn komi_service.fastapi_server:app --host 0.0.0.0 --port 8000
-streamlit run komi_service/streamlit_app.py -- --server_url http://192.168.10.87:8000
-python komi_service/webcam_client.py --cameras camera_12346:0 --server http://192.168.10.87:8000
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+streamlit run frontend/app.py -- --server_url http://192.168.10.87:8000
+python webcam_client.py --cameras camera_12346:0 --server http://192.168.10.87:8000
 ```
 
 # TODO:
