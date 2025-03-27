@@ -5,7 +5,6 @@ import os
 import time
 from ultralytics import YOLO
 import json
-from PIL import Image
 import numpy as np
 
 # TKinter GUI 숨기기
@@ -37,22 +36,23 @@ def load_reference_pose(json_path):
             keypoints.append([None, None])
     return np.array(keypoints, dtype=np.float32)
 
-# 거리 기반 유사성 판단 함수
-def is_pose_similar(current_pose, reference_pose, threshold=50):
+# 정확도 기반 유사성 판단 함수 (절대 거리 오차 20px 이하 기준 70% 이상 일치)
+def is_pose_similar_by_accuracy(current_pose, reference_pose, threshold_px=20, ratio=0.7):
     if current_pose is None or reference_pose is None:
         return False
-    valid_indices = [
-        i for i in range(len(reference_pose))
-        if reference_pose[i][0] is not None and current_pose[i][0] is not None
-    ]
-    if not valid_indices:
+    match_count = 0
+    total_count = 0
+    for i in range(len(reference_pose)):
+        ref = reference_pose[i]
+        cur = current_pose[i]
+        if ref[0] is not None and cur[0] is not None:
+            dist = np.linalg.norm(np.array(ref) - np.array(cur))
+            total_count += 1
+            if dist <= threshold_px:
+                match_count += 1
+    if total_count == 0:
         return False
-    diffs = [
-        np.linalg.norm(current_pose[i] - reference_pose[i])
-        for i in valid_indices
-    ]
-    mean_dist = np.mean(diffs)
-    return mean_dist < threshold
+    return (match_count / total_count) >= ratio
 
 # YOLO 모델 로딩
 yolo_model = YOLO("yolo11x-pose.pt")
@@ -64,52 +64,24 @@ print("mask shape:", mask.shape)
 if mask is None:
     print("마스크 이미지를 찾을 수 없습니다.")
     exit()
-reference_pose = load_reference_pose("C:/Users/user/Desktop/img_output/squat/front_json/json/frame100.json")
+reference_pose = load_reference_pose("C:/Users/user/Desktop/img_output/squat/front_json/json/use/frame_000.json")
 
 # 마스크 오버레이 함수 (반투명 적용)
 def overlay_mask(frame, mask, alpha_value=100):
     mask_resized = cv2.resize(mask, (frame.shape[1], frame.shape[0]))
-
-    if mask_resized.shape[2] != 4:
-        raise ValueError(f"Resized mask expected 4 channels (RGBA), got {mask_resized.shape[2]}")
-
     mask_rgb = mask_resized[:, :, :3].astype(np.uint8)
     mask_alpha = mask_resized[:, :, 3].astype(np.uint8)
-
     object_mask = (mask_alpha > 0).astype(np.uint8)
-
     custom_alpha = np.full_like(mask_alpha, alpha_value, dtype=np.uint8)
     custom_alpha[object_mask == 0] = 0
-
     frame_rgba = cv2.cvtColor(frame, cv2.COLOR_BGR2BGRA)
-
     for c in range(3):
         frame_rgba[:, :, c] = (
             frame_rgba[:, :, c] * (1 - custom_alpha / 255.0) +
             mask_rgb[:, :, c] * (custom_alpha / 255.0)
         ).astype(np.uint8)
-
     frame_rgba[:, :, 3] = np.maximum(frame_rgba[:, :, 3], custom_alpha)
-
     return cv2.cvtColor(frame_rgba, cv2.COLOR_BGRA2BGR)
-
-# 마스크 기반 정렬 판단 함수
-def is_pose_aligned(keypoints, mask, threshold_ratio=0.3):
-    mask_area = cv2.cvtColor(mask[:, :, :3], cv2.COLOR_BGR2GRAY)
-    _, binary_mask = cv2.threshold(mask_area, 10, 255, cv2.THRESH_BINARY)
-    h, w = binary_mask.shape
-    inside_count = 0
-    total_count = 0
-    for x, y in keypoints:
-        if x is not None and y is not None:
-            px, py = int(x), int(y)
-            if 0 <= px < w and 0 <= py < h:
-                if binary_mask[py, px] > 0:
-                    inside_count += 1
-                total_count += 1
-    if total_count == 0:
-        return False
-    return (inside_count / total_count) >= threshold_ratio
 
 # 웹캠 설정 및 비디오 객체 생성
 cap = cv2.VideoCapture(0)
@@ -139,12 +111,12 @@ while not aligned:
     vis_frame = overlay_mask(vis_frame, mask)
     if keypoints is not None:
         keypoints_array = np.array(keypoints, dtype=np.float32)
-        if is_pose_aligned(keypoints_array, mask) or is_pose_similar(keypoints_array, reference_pose):
+        if is_pose_similar_by_accuracy(keypoints_array, reference_pose):
             cv2.putText(vis_frame, "Pose Aligned! Starting soon...", (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
             aligned = True
             time.sleep(1)
         else:
-            cv2.putText(vis_frame, "Align your pose with the mask", (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+            cv2.putText(vis_frame, "Align your pose with the reference", (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
     else:
         cv2.putText(vis_frame, "Detecting pose...", (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 0), 3)
     cv2.imshow("Pose Alignment", vis_frame)
@@ -177,41 +149,8 @@ while cap.isOpened():
     frame = cv2.flip(frame, 1)
     if not ret:
         break
-
-    # 영상 저장은 원본 기준으로 진행
     if time.time() - record_start_time <= 2.9:
         out.write(frame)
-
-        # 실시간 디텍팅은 화면에만 출력한다.
-        if frame_count % 1 == 0:
-            results = yolo_model.predict(source=frame, stream = False, verbose = False)
-            for result in results:
-                if result.keypoints is not None:
-                    keypoints = result.keypoints.xy.cpu().numpy()[0]
-                    
-                    # 각 관절 포인트 시각화
-                    for x, y in keypoints:
-                        if x > 0 and y > 0:
-                            cv2.circle(frame, (int(x), int(y)), 5, (0, 255, 0), -1)
-
-                    # 관절 포인트 기반 라인 시각화
-                    skeleton = [
-                        (5, 7), (7, 9), (6, 8), (8, 10),  # 팔 (오른쪽, 왼쪽)
-                        (11, 13), (13, 15), (12, 14), (14, 16),  # 다리 (오른쪽, 왼쪽)
-                        (5, 6), (11, 12), (5, 11), (6, 12)  # 몸통 연결
-                    ]
-
-                    for j1, j2 in skeleton:
-                        x1, y1 = keypoints[j1]
-                        x2, y2 = keypoints[j2]
-                        if x1 > 0 and y1 > 0 and x2 > 0 and y2 > 0:     # 값이 존재할 때만
-                            pt1 = (int(x1), int(y1))
-                            pt2 = (int(x2), int(y2))
-                            cv2.line(frame, pt1, pt2, (0, 255, 0), 2)    # 초록색 선으로 표시
-
-        cv2.imshow('실시간 감지중', frame)
-        frame_count += 1
-
     else:
         print("2.9초 녹화 완료. 영상 저장 종료.")
         break
@@ -223,6 +162,7 @@ cap.release()
 out.release()
 cv2.destroyAllWindows()
 print(f"녹화 완료: {video_path}")
+
 
 # 87프레임 추출
 cap = cv2.VideoCapture(video_path)

@@ -85,7 +85,7 @@ def evaluate_pose_similarity(answer_dir, target_dir, threshold=0.98, output_path
 
 if __name__ == '__main__':
     answer_dir = "C:/WANTED/LLM/KOMI_PJT/LLM_Project/LJH/data/dummy/front_json"
-    target_dir = "C:/WANTED/LLM\KOMI_PJT/LLM_Project/LJH/data/front_json"
+    target_dir = "C:/Users/user/Desktop/new/json"
 
     if not answer_dir or not target_dir:
         print("❌ 경로 선택이 취소되었습니다.")
