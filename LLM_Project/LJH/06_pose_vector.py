@@ -2,7 +2,6 @@ import os
 import json
 import numpy as np
 import pandas as pd
-from tkinter import filedialog, Tk
 
 # =======================
 # 1. 유틸 함수 정의
@@ -41,7 +40,7 @@ def get_matched_json_files(answer_dir, target_dir):
 # 3. 유사도 비교 및 저장
 # =======================
 
-def evaluate_pose_similarity(answer_dir, target_dir, threshold=0.98, output_path='pose_similarity_result.csv'):
+def evaluate_pose_similarity(answer_dir, target_dir, threshold=0.98, output_path='C:/WANTED/LLM/KOMI_PJT/LLM_Project/LJH/output_csv/pose_similarity_result.csv'):
     matched_files = get_matched_json_files(answer_dir, target_dir)
     results = []
 
@@ -77,7 +76,7 @@ def evaluate_pose_similarity(answer_dir, target_dir, threshold=0.98, output_path
         'file_name': [os.path.basename(p[0]) for p in matched_files[:len(similarity_scores)]],
         'similarity': similarity_scores
     })
-    similarity_df.to_csv('all_similarity_scores.csv', index=False)
+    similarity_df.to_csv('C:/WANTED/LLM/KOMI_PJT/LLM_Project/LJH/output_csv/all_similarity_scores.csv', index=False)
     print("📊 전체 프레임 유사도 저장 완료: all_similarity_scores.csv")
 
 # =======================
@@ -85,9 +84,8 @@ def evaluate_pose_similarity(answer_dir, target_dir, threshold=0.98, output_path
 # =======================
 
 if __name__ == '__main__':
-    Tk().withdraw()
-    answer_dir = filedialog.askdirectory(title="정답 JSON 폴더 선택")
-    target_dir = filedialog.askdirectory(title="영상 JSON 폴더 선택")
+    answer_dir = "C:/WANTED/LLM/KOMI_PJT/LLM_Project/LJH/data/dummy/front_json"
+    target_dir = "C:/WANTED/LLM\KOMI_PJT/LLM_Project/LJH/data/front_json"
 
     if not answer_dir or not target_dir:
         print("❌ 경로 선택이 취소되었습니다.")
