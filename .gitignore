@@ -3,3 +3,4 @@ runs/
 **/__pycache__/
 *.pth
 nohup.out
+*.env
