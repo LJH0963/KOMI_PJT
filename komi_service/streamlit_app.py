@@ -17,11 +17,10 @@ import queue
 import collections
 import random
 
-# 웹소켓 관련 함수 임포트
+# 웹소켓 관련 함수 임포트 - 실제 사용하는 함수만 임포트
 from streamlit_websocket import (
-    get_session, get_event_loop, run_async, init_session, close_session,
-    update_connection_status, ws_connection_status, connection_attempts,
-    sync_server_time, async_get_cameras, run_async_loop, image_queues
+    run_async, async_get_cameras, run_async_loop, 
+    image_queues, ws_connection_status
 )
 
 # 서버 URL 설정
@@ -153,12 +152,56 @@ def get_cameras():
     st.session_state.server_status = status
     return cameras
 
-# 메인 UI
-def main():
+# 카메라 UI 업데이트 루프
+def update_camera_loop(image_slots, status_slots, connection_indicators, use_sync):
+    try:
+        update_interval = 0
+        while True:
+            update_interval += 1
+            update_ui = False
+            
+            if use_sync and len(st.session_state.selected_cameras) > 1:
+                # 동기화된 프레임 찾기
+                sync_frames = find_synchronized_frames()
+                if sync_frames:
+                    # 동기화된 프레임이 있으면 UI 업데이트
+                    for camera_id, frame_data in sync_frames.items():
+                        st.session_state.camera_images[camera_id] = frame_data["image"]
+                        st.session_state.image_update_time[camera_id] = frame_data["time"]
+                    update_ui = True
+            else:
+                # 동기화 없이 각 카메라의 최신 프레임 사용
+                for camera_id in st.session_state.selected_cameras[:2]:
+                    if camera_id in image_queues and not image_queues[camera_id].empty():
+                        try:
+                            img_data = image_queues[camera_id].get(block=False)
+                            st.session_state.camera_images[camera_id] = img_data.get("image")
+                            st.session_state.image_update_time[camera_id] = img_data.get("time")
+                            update_ui = True
+                        except queue.Empty:
+                            pass
+            
+            # 이미지 업데이트
+            if update_ui:
+                for camera_id in st.session_state.selected_cameras[:2]:
+                    if camera_id in st.session_state.camera_images:
+                        img = st.session_state.camera_images[camera_id]
+                        if img is not None:
+                            image_slots[camera_id].image(img, use_container_width=True)
+                            status_time = st.session_state.image_update_time[camera_id].strftime('%H:%M:%S.%f')[:-3]
+                            status_slots[camera_id].text(f"업데이트: {status_time}")
+            
+            # UI 업데이트 간격 (더 빠른 응답성)
+            time.sleep(0.05)
+    except Exception as e:
+        # 오류 표시 개선
+        st.error(f"오류가 발생했습니다. 페이지를 새로 고침해주세요.")
+
+# 카메라 테스트 UI
+def camera_test():
     global selected_cameras, is_running, server_time_offset, last_time_sync
     
     st.title("KOMI 웹캠 모니터링")
-    # st.caption(f"서버 연결: {API_URL} (시간 오프셋: {server_time_offset:.3f}초)")
     
     # 서버 상태 확인
     if st.session_state.server_status is None:
@@ -242,64 +285,16 @@ def main():
         thread.start()
         st.session_state.thread_started = True
     
-    # 메인 UI 업데이트 루프
-    try:
-        update_interval = 0
-        while True:
-            update_interval += 1
-            update_ui = False
-            
-            if use_sync and len(st.session_state.selected_cameras) > 1:
-                # 동기화된 프레임 찾기
-                sync_frames = find_synchronized_frames()
-                if sync_frames:
-                    # 동기화된 프레임이 있으면 UI 업데이트
-                    for camera_id, frame_data in sync_frames.items():
-                        st.session_state.camera_images[camera_id] = frame_data["image"]
-                        st.session_state.image_update_time[camera_id] = frame_data["time"]
-                    update_ui = True
-            else:
-                # 동기화 없이 각 카메라의 최신 프레임 사용
-                for camera_id in st.session_state.selected_cameras[:2]:
-                    if camera_id in image_queues and not image_queues[camera_id].empty():
-                        try:
-                            img_data = image_queues[camera_id].get(block=False)
-                            st.session_state.camera_images[camera_id] = img_data.get("image")
-                            st.session_state.image_update_time[camera_id] = img_data.get("time")
-                            update_ui = True
-                        except queue.Empty:
-                            pass
-            
-            # 이미지 업데이트
-            if update_ui:
-                for camera_id in st.session_state.selected_cameras[:2]:
-                    if camera_id in st.session_state.camera_images:
-                        img = st.session_state.camera_images[camera_id]
-                        if img is not None:
-                            image_slots[camera_id].image(img, use_container_width=True)
-                            status_time = st.session_state.image_update_time[camera_id].strftime('%H:%M:%S.%f')[:-3]
-                            status_slots[camera_id].text(f"업데이트: {status_time}")
-                            
-                            # 연결 상태 표시 업데이트
-                            if camera_id in ws_connection_status:
-                                connection_status = ws_connection_status[camera_id]
-                                if connection_status == "connected":
-                                    connection_indicators[camera_id].success("연결됨")
-                                elif connection_status == "reconnecting":
-                                    connection_indicators[camera_id].warning("재연결 중")
-                                else:
-                                    connection_indicators[camera_id].error("연결 끊김")
-            
-            # UI 업데이트 간격 (더 빠른 응답성)
-            time.sleep(0.05)
-    except Exception as e:
-        # 오류 표시 개선
-        st.error(f"오류가 발생했습니다. 페이지를 새로 고침해주세요.")
+    # UI 업데이트 루프 실행
+    update_camera_loop(image_slots, status_slots, connection_indicators, use_sync)
+
+
+
     
 # 애플리케이션 시작
 if __name__ == "__main__":
     try:
-        main()
+        camera_test()
     except Exception:
         st.error("앱 실행 오류가 발생했습니다. 페이지를 새로 고침해주세요.")
     finally:

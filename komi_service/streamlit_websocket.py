@@ -379,3 +379,4 @@ def run_async_loop(API_URL, selected_cameras, is_running, sync_buffer, server_ti
         
         # 루프 중지
         loop.stop()
+
