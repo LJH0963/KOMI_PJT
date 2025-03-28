@@ -4,3 +4,4 @@ runs/
 *.pth
 nohup.out
 *.env
+**backup*/

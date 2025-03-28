@@ -1,6 +1,5 @@
 from fastapi import FastAPI, WebSocket, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 import asyncio
 import json
 import time
@@ -8,14 +7,6 @@ from datetime import datetime
 from typing import Dict, List, Set
 import threading
 from contextlib import asynccontextmanager
-import os
-import mimetypes
-from fastapi.responses import FileResponse, Response, StreamingResponse
-from fastapi import Header
-import re
-
-# MIME 타입 등록
-mimetypes.add_type("video/mp4", ".mp4")
 
 # 저장소: 카메라 ID -> 이미지 데이터
 latest_image_data: Dict[str, str] = {}
@@ -37,45 +28,6 @@ app_state = {
     "last_connection_cleanup": datetime.now()
 }
 
-# 운동 관련 데이터
-exercise_data = {
-    "exercises": [
-        {
-            "id": "squat",
-            "name": "스쿼트",
-            "description": "기본적인 하체 운동",
-            "guide_videos": {
-                "front": "/squat/front.mp4",
-                "side": "/squat/side.mp4"
-            },
-            "difficulty": "초급"
-        },
-        {
-            "id": "pushup",
-            "name": "푸시업",
-            "description": "상체 근력 운동",
-            "guide_videos": {
-                "front": "/pushup/front.mp4",
-                "side": "/pushup/side.mp4"
-            },
-            "difficulty": "중급"
-        },
-        {
-            "id": "lunge",
-            "name": "런지",
-            "description": "하체 균형 운동",
-            "guide_videos": {
-                "front": "/lunge/front.mp4",
-                "side": "/lunge/side.mp4"
-            },
-            "difficulty": "중급"
-        }
-    ]
-}
-
-# 운동 세션 관리
-exercise_sessions = {}
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app_state["start_time"] = datetime.now()
@@ -93,14 +45,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# 정적 파일 서빙 설정
-data_directory = os.path.join(os.getcwd(), "komi_service", "data")
-if not os.path.exists(data_directory):
-    os.makedirs(data_directory, exist_ok=True)
-
-# 정적 파일 서빙 설정
-app.mount("/data", StaticFiles(directory=data_directory), name="data")
 
 # 헬스 체크 엔드포인트
 @app.get("/health")
@@ -226,46 +170,6 @@ async def broadcast_image_to_subscribers(camera_id: str, image_data: str, timest
         "type": "image",
         "camera_id": camera_id,
         "image_data": image_data,
-        "timestamp": timestamp.isoformat()
-    }
-    
-    # 직렬화
-    message_str = json.dumps(message)
-    
-    # 구독자 목록 복사 (비동기 처리 중 변경될 수 있음)
-    with data_lock:
-        if camera_id in camera_info and "subscribers" in camera_info[camera_id]:
-            subscribers = camera_info[camera_id]["subscribers"].copy()
-        else:
-            return
-    
-    # 끊어진 연결 추적
-    dead_connections = set()
-    
-    # 모든 구독자에게 전송
-    for websocket in subscribers:
-        try:
-            await websocket.send_text(message_str)
-        except Exception:
-            dead_connections.add(websocket)
-    
-    # 끊어진 연결 정리
-    if dead_connections:
-        with data_lock:
-            if camera_id in camera_info and "subscribers" in camera_info[camera_id]:
-                camera_info[camera_id]["subscribers"] -= dead_connections
-
-# WebSocket 구독자에게 포즈 데이터 브로드캐스트
-async def broadcast_pose_to_subscribers(camera_id: str, pose_data: dict, timestamp: datetime):
-    """WebSocket 구독자들에게 포즈 데이터 직접 전송"""
-    if camera_id not in camera_info or "subscribers" not in camera_info[camera_id]:
-        return
-    
-    # 메시지 준비
-    message = {
-        "type": "pose_data",
-        "camera_id": camera_id,
-        "pose_data": pose_data,
         "timestamp": timestamp.isoformat()
     }
     
@@ -503,33 +407,6 @@ async def camera_websocket(websocket: WebSocket):
                             # 일반 웹소켓 클라이언트에게 알림
                             await notify_clients(camera_id)
                     
-                    elif msg_type == "pose_data":
-                        # 포즈 데이터 처리
-                        pose_data = data.get("pose_data")
-                        image_data = data.get("image_data")
-                        if pose_data:
-                            timestamp = datetime.now()
-                            last_seen = timestamp
-                            
-                            # 포즈 데이터와 이미지를 함께 저장하는 경우
-                            if image_data:
-                                with data_lock:
-                                    latest_image_data[camera_id] = image_data
-                                    latest_timestamps[camera_id] = timestamp
-                                    
-                                    # 카메라 상태 업데이트
-                                    if camera_id in camera_info:
-                                        camera_info[camera_id]["last_seen"] = timestamp
-                                
-                                # 구독자에게 이미지 직접 전송
-                                await broadcast_image_to_subscribers(camera_id, image_data, timestamp)
-                            
-                            # 구독자에게 포즈 데이터 전송
-                            await broadcast_pose_to_subscribers(camera_id, pose_data, timestamp)
-                            
-                            # 일반 웹소켓 클라이언트에게 알림
-                            await notify_clients(camera_id)
-                    
                     elif msg_type == "disconnect":
                         # 클라이언트에서 종료 요청 - 정상 종료
                         print(f"카메라 {camera_id}에서 연결 종료 요청을 받음")
@@ -624,196 +501,10 @@ async def stream_camera(websocket: WebSocket, camera_id: str):
             if camera_id in camera_info and "subscribers" in camera_info[camera_id]:
                 camera_info[camera_id]["subscribers"].discard(websocket)
 
-# 포즈 스트리밍 위한 WebSocket 엔드포인트
-@app.websocket("/ws/pose/{camera_id}")
-async def stream_pose(websocket: WebSocket, camera_id: str):
-    """특정 카메라의 포즈 데이터를 WebSocket으로 스트리밍"""
-    await websocket.accept()
-    
-    # 해당 카메라가 존재하는지 확인
-    if camera_id not in camera_info:
-        await websocket.close(code=1008, reason=f"카메라 ID {camera_id}를 찾을 수 없습니다")
-        return
-    
-    # 해당 카메라의 실시간 스트리밍을 구독하는 클라이언트 등록
-    with data_lock:
-        if "subscribers" not in camera_info[camera_id]:
-            camera_info[camera_id]["subscribers"] = set()
-        
-        camera_info[camera_id]["subscribers"].add(websocket)
-    
-    try:
-        # 연결 유지 루프 - 개선된 함수 사용
-        if not await keep_websocket_alive(websocket):
-            # 연결 유지 실패
-            pass
-    except Exception:
-        # 예외 처리 - 조용히 진행
-        pass
-    finally:
-        # 구독 목록에서 제거
-        with data_lock:
-            if camera_id in camera_info and "subscribers" in camera_info[camera_id]:
-                camera_info[camera_id]["subscribers"].discard(websocket)
-
 # 정리 작업 백그라운드 태스크 시작
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(cleanup_connections())
-
-# 운동 목록 조회 엔드포인트
-@app.get("/exercises")
-async def get_exercises():
-    """사용 가능한 운동 목록 조회"""
-    return exercise_data
-
-# 운동 세션 시작 엔드포인트
-@app.post("/exercise/start")
-async def start_exercise(exercise_id: str, camera_ids: List[str]):
-    """운동 세션 시작"""
-    if exercise_id not in [ex["id"] for ex in exercise_data["exercises"]]:
-        raise HTTPException(status_code=404, detail="운동을 찾을 수 없습니다")
-    
-    session_id = f"session_{len(exercise_sessions) + 1}"
-    exercise_sessions[session_id] = {
-        "exercise_id": exercise_id,
-        "camera_ids": camera_ids,
-        "status": "ready",
-        "start_time": datetime.now(),
-        "end_time": None
-    }
-    
-    return {
-        "session_id": session_id,
-        "status": "ready"
-    }
-
-# 운동 세션 상태 조회 엔드포인트
-@app.get("/exercise/{session_id}")
-async def get_exercise_status(session_id: str):
-    """운동 세션 상태 조회"""
-    if session_id not in exercise_sessions:
-        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다")
-    
-    return exercise_sessions[session_id]
-
-# 운동 세션 종료 엔드포인트
-@app.post("/exercise/{session_id}/end")
-async def end_exercise(session_id: str):
-    """운동 세션 종료"""
-    if session_id not in exercise_sessions:
-        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다")
-    
-    exercise_sessions[session_id]["status"] = "completed"
-    exercise_sessions[session_id]["end_time"] = datetime.now()
-    
-    return {
-        "session_id": session_id,
-        "status": "completed"
-    }
-
-# 비디오 파일 정보 확인 엔드포인트
-@app.get("/video_info/{video_path:path}")
-async def get_video_info(video_path: str):
-    """비디오 파일 정보 확인"""
-    file_path = os.path.join(data_directory, video_path)
-    
-    if not os.path.exists(file_path):
-        return {
-            "exists": False,
-            "message": f"파일이 존재하지 않습니다: {file_path}"
-        }
-    
-    try:
-        file_size = os.path.getsize(file_path)
-        
-        # 파일이 너무 작으면 손상되었거나 비어있을 가능성이 높음
-        if file_size < 1000:  # 1KB 미만
-            return {
-                "exists": True,
-                "valid": False,
-                "file_size": file_size,
-                "message": f"파일이 너무 작습니다 ({file_size} bytes). 손상되었거나 비어있을 수 있습니다."
-            }
-        
-        return {
-            "exists": True,
-            "valid": True,
-            "file_size": file_size,
-            "file_path": file_path,
-            "content_type": "video/mp4" if file_path.endswith(".mp4") else "unknown"
-        }
-    except Exception as e:
-        return {
-            "exists": True,
-            "valid": False,
-            "message": f"파일 정보 확인 중 오류 발생: {str(e)}"
-        }
-
-# 비디오 파일 직접 서빙 엔드포인트
-@app.get("/video/{video_path:path}")
-async def get_video(video_path: str, range: str = Header(None)):
-    """비디오 파일 직접 서빙 (스트리밍 지원)"""
-    file_path = os.path.join(data_directory, video_path)
-    
-    if not os.path.exists(file_path):
-        print(f"파일을 찾을 수 없습니다: {file_path}")
-        return Response(
-            content=f"파일을 찾을 수 없습니다: {video_path}",
-            status_code=404
-        )
-    
-    # 파일 크기 확인
-    file_size = os.path.getsize(file_path)
-    
-    # Range 요청이 없으면 전체 파일 반환
-    if not range:
-        return FileResponse(
-            path=file_path,
-            media_type="video/mp4",
-            filename=os.path.basename(file_path)
-        )
-    
-    # Range 요청 처리 (예: bytes=0-1023)
-    range_match = re.match(r'bytes=(\d+)-(\d*)', range)
-    if range_match:
-        start_byte = int(range_match.group(1))
-        end_byte = int(range_match.group(2)) if range_match.group(2) else file_size - 1
-        end_byte = min(end_byte, file_size - 1)
-        content_length = end_byte - start_byte + 1
-        
-        # 파일 스트리밍을 위한 함수
-        async def stream_file():
-            with open(file_path, 'rb') as video:
-                video.seek(start_byte)
-                yield video.read(content_length)
-        
-        # StreamingResponse로 반환
-        response = StreamingResponse(
-            stream_file(),
-            media_type="video/mp4",
-            status_code=206  # Partial Content
-        )
-        
-        # 필요한 헤더 설정
-        response.headers["Content-Range"] = f"bytes {start_byte}-{end_byte}/{file_size}"
-        response.headers["Accept-Ranges"] = "bytes"
-        response.headers["Content-Length"] = str(content_length)
-        response.headers["Content-Disposition"] = f"inline; filename={os.path.basename(file_path)}"
-        
-        # CORS 헤더 추가
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = '*'
-        
-        return response
-    
-    # Range 형식이 올바르지 않은 경우
-    return FileResponse(
-        path=file_path,
-        media_type="video/mp4",
-        filename=os.path.basename(file_path)
-    )
 
 # 서버 실행 (직접 실행 시)
 if __name__ == "__main__":
