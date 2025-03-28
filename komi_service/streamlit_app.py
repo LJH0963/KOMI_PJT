@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 import queue
 import collections
 import random
+import requests
 
 # 웹소켓 관련 함수 임포트 - 실제 사용하는 함수만 임포트
 from streamlit_websocket import (
@@ -62,6 +63,12 @@ if 'sync_status' not in st.session_state:
     st.session_state.sync_status = "준비 중..."
 if 'connection_status' not in st.session_state:
     st.session_state.connection_status = {}
+if 'page' not in st.session_state:
+    st.session_state.page = "main"
+if 'selected_exercise' not in st.session_state:
+    st.session_state.selected_exercise = None
+if 'exercises' not in st.session_state:
+    st.session_state.exercises = []
 
 # Base64 이미지 디코딩 함수
 def decode_image(base64_image):
@@ -83,10 +90,7 @@ def process_image_in_thread(image_data):
     try:
         if not image_data:
             return None
-        if isinstance(image_data, str) and image_data.startswith('http'):  # URL인 경우 (향후 확장성)
-            return None
-        else:
-            return decode_image(image_data)  # Base64 이미지인 경우
+        return decode_image(image_data)  # Base64 이미지인 경우
     except Exception as e:
         print(f"이미지 처리 오류: {str(e)}")
         return None
@@ -152,6 +156,18 @@ def get_cameras():
     st.session_state.server_status = status
     return cameras
 
+# 운동 목록 가져오기
+def get_exercises():
+    """운동 목록 가져오기"""
+    try:
+        response = requests.get(f"{API_URL}/exercises")
+        if response.status_code == 200:
+            return response.json().get("exercises", [])
+        return []
+    except Exception as e:
+        print(f"운동 목록 요청 오류: {str(e)}")
+        return []
+
 # 카메라 UI 업데이트 루프
 def update_camera_loop(image_slots, status_slots, connection_indicators, use_sync):
     try:
@@ -196,6 +212,188 @@ def update_camera_loop(image_slots, status_slots, connection_indicators, use_syn
     except Exception as e:
         # 오류 표시 개선
         st.error(f"오류가 발생했습니다. 페이지를 새로 고침해주세요.")
+
+# 메인 화면 UI - 운동 선택 화면
+def main_page():
+    st.title("KOMI 운동 가이드")
+    
+    # 처음 로드 시 운동 목록 가져오기
+    if not st.session_state.exercises:
+        with st.spinner("운동 목록을 가져오는 중..."):
+            st.session_state.exercises = get_exercises()
+    
+    # 운동 목록이 없으면 표시 후 종료
+    if not st.session_state.exercises:
+        st.info("서버에서 운동 정보를 가져올 수 없습니다.")
+        if st.button("새로고침"):
+            st.session_state.exercises = get_exercises()
+            st.rerun()
+        return
+    
+    # 운동 선택 칸 표시
+    st.subheader("원하는 운동을 선택하세요")
+    
+    # 운동 선택 레이아웃
+    cols = st.columns(len(st.session_state.exercises))
+    
+    for i, exercise in enumerate(st.session_state.exercises):
+        with cols[i]:
+            st.write(f"### {exercise['name']}")
+            st.write(exercise['description'])
+            if st.button(f"{exercise['name']} 선택", key=f"ex_{exercise['id']}"):
+                st.session_state.selected_exercise = exercise
+                st.session_state.page = "exercise_guide"
+                st.rerun()
+
+# 운동 가이드 화면
+def exercise_guide():
+    exercise = st.session_state.selected_exercise
+    
+    st.title(f"{exercise['name']} 가이드")
+    st.write(exercise['description'])
+    
+    # 뒤로가기 버튼
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col1:
+        if st.button("← 뒤로가기"):
+            st.session_state.page = "main"
+            st.rerun()
+    
+    # 운동하기 버튼
+    with col3:
+        if st.button("운동하기 →"):
+            st.session_state.page = "exercise_webcam"
+            st.rerun()
+    
+    # 가이드 영상 표시
+    st.subheader("가이드 영상")
+    
+    # 영상 표시 레이아웃
+    col1, col2 = st.columns(2)
+    
+    # 전면 영상
+    with col1:
+        st.write("#### 전면 영상")
+        front_video_path = f"{API_URL}/data{exercise['guide_videos']['front']}"
+        st.video(front_video_path)
+    
+    # 측면 영상
+    with col2:
+        st.write("#### 측면 영상")
+        side_video_path = f"{API_URL}/data{exercise['guide_videos']['side']}"
+        st.video(side_video_path)
+
+
+def exercise_webcam():
+    global selected_cameras, is_running, server_time_offset, last_time_sync
+    
+    exercise = st.session_state.selected_exercise
+    
+    st.title(f"{exercise['name']} 운동 모니터링")
+    
+    # 뒤로가기 버튼
+    if st.button("← 가이드로 돌아가기"):
+        st.session_state.page = "exercise_guide"
+        st.rerun()
+    
+    # 서버 상태 확인
+    if st.session_state.server_status is None:
+        with st.spinner("서버 연결 중..."):
+            st.session_state.cameras = get_cameras()
+    
+    # 서버 상태에 따른 처리
+    if st.session_state.server_status == "연결 실패":
+        st.error("서버에 연결할 수 없습니다")
+        if st.button("재연결"):
+            st.session_state.cameras = get_cameras()
+            st.rerun()
+        return
+    
+    # 카메라 목록이 없으면 표시 후 종료
+    if not st.session_state.cameras:
+        st.info("연결된 카메라가 없습니다")
+        if st.button("새로고침"):
+            st.session_state.cameras = get_cameras()
+            st.rerun()
+        return
+    
+    # 카메라 자동 선택 (사용자 선택 UI 제거)
+    if st.session_state.cameras:
+        # 카메라가 1대인 경우 해당 카메라만 선택
+        # 카메라가 2대 이상인 경우 처음 2대 선택
+        auto_selected = st.session_state.cameras[:min(2, len(st.session_state.cameras))]
+        
+        if auto_selected != st.session_state.selected_cameras:
+            st.session_state.selected_cameras = auto_selected
+            selected_cameras = auto_selected
+            # 카메라 선택 변경 시 동기화 버퍼 초기화
+            init_sync_buffer(auto_selected)
+    
+    # 동기화 설정
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        # 비어있는 텍스트 표시 (동기화 상태 준비 중 메시지 제거)
+        st.caption("")
+    with col2:
+        # 체크박스 제거하고 동기화는 항상 활성화
+        use_sync = True
+    
+    # 카메라 슬롯 설정
+    if st.session_state.selected_cameras:
+        cols = st.columns(min(2, len(st.session_state.selected_cameras)))
+        image_slots = {}
+        status_slots = {}
+        connection_indicators = {}
+        
+        # 카메라 개수에 따라 다르게 표시
+        camera_count = len(st.session_state.selected_cameras)
+        
+        if camera_count == 1:
+            # 카메라가 1대인 경우 정면으로 표시
+            camera_id = st.session_state.selected_cameras[0]
+            with cols[0]:
+                header_col1, header_col2 = st.columns([4, 1])
+                with header_col1:
+                    # st.subheader(f"정면 카메라: {camera_id}")
+                    st.subheader(f"정면")
+                with header_col2:
+                    connection_indicators[camera_id] = st.empty()
+                
+                image_slots[camera_id] = st.empty()
+                status_slots[camera_id] = st.empty()
+                status_slots[camera_id].text("실시간 스트리밍 준비 중...")
+        else:
+            # 카메라가 2대인 경우 정면/측면으로 표시
+            for i, camera_id in enumerate(st.session_state.selected_cameras[:2]):
+                # view_type = "정면" if i == 0 else "측면"
+                with cols[i]:
+                    header_col1, header_col2 = st.columns([4, 1])
+                    with header_col1:
+                        # st.subheader(f"{view_type} 카메라: {camera_id}")
+                        st.subheader(f"측면")
+                    with header_col2:
+                        connection_indicators[camera_id] = st.empty()
+                    
+                    image_slots[camera_id] = st.empty()
+                    status_slots[camera_id] = st.empty()
+                    status_slots[camera_id].text("실시간 스트리밍 준비 중...")
+    
+    # 별도 스레드 시작 (단 한번만)
+    if 'thread_started' not in st.session_state:
+        thread = threading.Thread(
+            target=run_async_loop,
+            args=(
+                API_URL, selected_cameras, is_running, sync_buffer, server_time_offset,
+                last_time_sync, TIME_SYNC_INTERVAL, process_image_in_thread, thread_pool
+            ),
+            daemon=True
+        )
+        thread.start()
+        st.session_state.thread_started = True
+    
+    # UI 업데이트 루프 실행
+    update_camera_loop(image_slots, status_slots, connection_indicators, use_sync)
+
 
 # 카메라 테스트 UI
 def camera_test():
@@ -287,14 +485,21 @@ def camera_test():
     
     # UI 업데이트 루프 실행
     update_camera_loop(image_slots, status_slots, connection_indicators, use_sync)
+ 
+# 전체 앱 라우팅
+def main():
+    # 페이지 라우팅
+    if st.session_state.page == "main":
+        main_page()
+    elif st.session_state.page == "exercise_guide":
+        exercise_guide()
+    elif st.session_state.page == "exercise_webcam":
+        exercise_webcam()
 
-
-
-    
 # 애플리케이션 시작
 if __name__ == "__main__":
     try:
-        camera_test()
+        main()
     except Exception:
         st.error("앱 실행 오류가 발생했습니다. 페이지를 새로 고침해주세요.")
     finally:
@@ -303,4 +508,4 @@ if __name__ == "__main__":
         time.sleep(0.5)
         
         # 스레드 풀 종료
-        thread_pool.shutdown() 
+        thread_pool.shutdown()
