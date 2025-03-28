@@ -18,11 +18,11 @@ import collections
 import random
 
 # 웹소켓 관련 함수 임포트
-from streamlit_websocket import get_session, get_event_loop, run_async, init_session, close_session
-from streamlit_websocket import update_connection_status, ws_connection_status, connection_attempts
-from streamlit_websocket import sync_server_time, async_get_cameras
-from streamlit_websocket import connect_to_camera_stream, update_images, run_async_loop
-from streamlit_websocket import image_queues
+from streamlit_websocket import (
+    get_session, get_event_loop, run_async, init_session, close_session,
+    update_connection_status, ws_connection_status, connection_attempts,
+    sync_server_time, async_get_cameras, run_async_loop, image_queues
+)
 
 # 서버 URL 설정
 API_URL = "http://localhost:8000"
@@ -145,11 +145,6 @@ def find_synchronized_frames():
         return best_frames
     
     return None
-
-# 서버 시간 기준 현재 시간 반환
-def get_server_time():
-    """서버 시간 기준의 현재 시간 계산"""
-    return datetime.now() + timedelta(seconds=server_time_offset)
 
 # 동기 카메라 목록 가져오기 (Streamlit 호환용)
 def get_cameras():
@@ -284,6 +279,16 @@ def main():
                             image_slots[camera_id].image(img, use_container_width=True)
                             status_time = st.session_state.image_update_time[camera_id].strftime('%H:%M:%S.%f')[:-3]
                             status_slots[camera_id].text(f"업데이트: {status_time}")
+                            
+                            # 연결 상태 표시 업데이트
+                            if camera_id in ws_connection_status:
+                                connection_status = ws_connection_status[camera_id]
+                                if connection_status == "connected":
+                                    connection_indicators[camera_id].success("연결됨")
+                                elif connection_status == "reconnecting":
+                                    connection_indicators[camera_id].warning("재연결 중")
+                                else:
+                                    connection_indicators[camera_id].error("연결 끊김")
             
             # UI 업데이트 간격 (더 빠른 응답성)
             time.sleep(0.05)

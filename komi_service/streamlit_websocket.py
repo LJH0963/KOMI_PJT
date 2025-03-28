@@ -23,6 +23,9 @@ ws_connection_status = {}  # 카메라ID -> 상태 ("connected", "disconnected",
 # 스레드별 전용 세션과 이벤트 루프
 thread_local = threading.local()
 
+# 이미지 처리 관련 변수
+image_processor = None  # 이미지 처리 콜백 함수 (streamlit_app.py에서 설정)
+
 # 연결 상태 업데이트 함수
 def update_connection_status(camera_id, status):
     """카메라 연결 상태 업데이트"""
@@ -37,6 +40,12 @@ def update_connection_status(camera_id, status):
     elif status == "disconnected":
         if camera_id not in connection_attempts:
             connection_attempts[camera_id] = 0
+
+# 이미지 처리 콜백 설정
+def set_image_processor(processor_callback):
+    """이미지 처리 콜백 함수 설정"""
+    global image_processor
+    image_processor = processor_callback
 
 # 스레드별 세션 및 이벤트 루프 관리
 def get_session():
@@ -134,10 +143,14 @@ async def async_get_cameras(API_URL):
         return [], "연결 실패"
 
 # WebSocket 연결 및 이미지 스트리밍 수신 - 안정성 개선
-async def connect_to_camera_stream(camera_id, API_URL, is_running, sync_buffer, 
-                                   process_image_in_thread, thread_pool, get_event_loop):
+async def connect_to_camera_stream(camera_id, API_URL, is_running, sync_buffer, thread_pool):
     """WebSocket을 통해 카메라 스트림에 연결"""
-    global connection_attempts, image_queues
+    global connection_attempts, image_queues, image_processor
+    
+    # 이미지 처리기가 설정되지 않은 경우 오류
+    if image_processor is None:
+        print("이미지 처리 콜백이 설정되지 않았습니다")
+        return False
     
     # 연결 상태 업데이트
     update_connection_status(camera_id, "reconnecting")
@@ -214,7 +227,7 @@ async def connect_to_camera_stream(camera_id, API_URL, is_running, sync_buffer,
                                     loop = get_event_loop()
                                     future = loop.run_in_executor(
                                         thread_pool, 
-                                        process_image_in_thread, 
+                                        image_processor, 
                                         image_data
                                     )
                                     image = await future
@@ -268,7 +281,7 @@ async def connect_to_camera_stream(camera_id, API_URL, is_running, sync_buffer,
 
 # 비동기 이미지 업데이트 함수
 async def update_images(API_URL, selected_cameras, is_running, sync_buffer, server_time_offset, 
-                       last_time_sync, TIME_SYNC_INTERVAL, process_image_in_thread, thread_pool):
+                       last_time_sync, TIME_SYNC_INTERVAL, thread_pool):
     """백그라운드에서 이미지를 가져오는 함수 (WebSocket 기반)"""
     
     # 세션 초기화
@@ -309,8 +322,7 @@ async def update_images(API_URL, selected_cameras, is_running, sync_buffer, serv
                         await asyncio.sleep(jitter)
                         stream_tasks[camera_id] = asyncio.create_task(
                             connect_to_camera_stream(
-                                camera_id, API_URL, is_running, sync_buffer, 
-                                process_image_in_thread, thread_pool, get_event_loop
+                                camera_id, API_URL, is_running, sync_buffer, thread_pool
                             )
                         )
             
@@ -335,8 +347,11 @@ async def update_images(API_URL, selected_cameras, is_running, sync_buffer, serv
 
 # 백그라운드 스레드에서 비동기 루프 실행
 def run_async_loop(API_URL, selected_cameras, is_running, sync_buffer, server_time_offset, 
-                  last_time_sync, TIME_SYNC_INTERVAL, process_image_in_thread, thread_pool):
+                  last_time_sync, TIME_SYNC_INTERVAL, process_image_callback, thread_pool):
     """비동기 루프를 실행하는 스레드 함수"""
+    # 이미지 처리 콜백 설정
+    set_image_processor(process_image_callback)
+    
     # 이 스레드 전용 이벤트 루프 생성
     loop = get_event_loop()
     
@@ -345,7 +360,7 @@ def run_async_loop(API_URL, selected_cameras, is_running, sync_buffer, server_ti
         task = loop.create_task(
             update_images(
                 API_URL, selected_cameras, is_running, sync_buffer, server_time_offset, 
-                last_time_sync, TIME_SYNC_INTERVAL, process_image_in_thread, thread_pool
+                last_time_sync, TIME_SYNC_INTERVAL, thread_pool
             )
         )
         
