@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 # 공유 변수 및 데이터 저장소
 latest_image_data: Dict[str, str] = {}
 latest_timestamps: Dict[str, datetime] = {}
+latest_pose_data: Dict[str, dict] = {}  # 카메라 ID별 포즈 데이터 저장
 active_connections: Set[WebSocket] = set()
 camera_info: Dict[str, dict] = {}
 data_lock = threading.Lock()
@@ -99,6 +100,8 @@ async def disconnect_camera(camera_id: str):
                 del latest_image_data[camera_id]
             if camera_id in latest_timestamps:
                 del latest_timestamps[camera_id]
+            if camera_id in latest_pose_data:
+                del latest_pose_data[camera_id]
             
             return True
     return False
@@ -143,7 +146,7 @@ async def cleanup_connections():
         except Exception:
             await asyncio.sleep(10)  # 오류 발생해도 계속 실행
 
-async def broadcast_image_to_subscribers(camera_id: str, image_data: str, timestamp: datetime):
+async def broadcast_image_to_subscribers(camera_id: str, image_data: str, timestamp: datetime, pose_data=None):
     """WebSocket 구독자들에게 이미지 데이터 직접 전송"""
     if camera_id not in camera_info or "subscribers" not in camera_info[camera_id]:
         return
@@ -155,6 +158,11 @@ async def broadcast_image_to_subscribers(camera_id: str, image_data: str, timest
         "image_data": image_data,
         "timestamp": timestamp.isoformat()
     }
+    
+    # 포즈 데이터가 있으면 추가
+    if pose_data:
+        message["pose_data"] = pose_data
+        message["type"] = "image_with_pose"
     
     # 직렬화
     message_str = json.dumps(message)
@@ -182,7 +190,7 @@ async def broadcast_image_to_subscribers(camera_id: str, image_data: str, timest
             if camera_id in camera_info and "subscribers" in camera_info[camera_id]:
                 camera_info[camera_id]["subscribers"] -= dead_connections
 
-async def notify_clients(camera_id: str):
+async def notify_clients(camera_id: str, has_pose_data=False):
     """웹소켓 클라이언트에게 이미지 업데이트 알림"""
     if not active_connections:
         return
@@ -193,6 +201,10 @@ async def notify_clients(camera_id: str):
         "camera_id": camera_id,
         "timestamp": datetime.now().isoformat()
     }
+    
+    if has_pose_data:
+        message["type"] = "image_update_with_pose"
+        message["has_pose"] = True
     
     message_str = json.dumps(message)
     
@@ -356,7 +368,7 @@ async def handle_camera_websocket(websocket: WebSocket):
                     # 타입별 메시지 처리
                     msg_type = data.get("type")
                     
-                    if msg_type == "frame":
+                    if msg_type == "frame" or msg_type == "frame_with_pose":
                         # 프레임 저장
                         image_data = data.get("image_data")
                         if image_data:
@@ -368,15 +380,22 @@ async def handle_camera_websocket(websocket: WebSocket):
                                 latest_image_data[camera_id] = image_data
                                 latest_timestamps[camera_id] = timestamp
                                 
+                                # 포즈 데이터가 있으면 저장
+                                has_pose_data = False
+                                if "pose_data" in data and data["pose_data"]:
+                                    latest_pose_data[camera_id] = data["pose_data"]
+                                    has_pose_data = True
+                                
                                 # 카메라 상태 업데이트
                                 if camera_id in camera_info:
                                     camera_info[camera_id]["last_seen"] = timestamp
                             
-                            # 구독자에게 이미지 직접 전송
-                            await broadcast_image_to_subscribers(camera_id, image_data, timestamp)
+                            # 구독자에게 이미지 직접 전송 (포즈 데이터 포함)
+                            pose_data = data.get("pose_data") if has_pose_data else None
+                            await broadcast_image_to_subscribers(camera_id, image_data, timestamp, pose_data)
                             
                             # 일반 웹소켓 클라이언트에게 알림
-                            await notify_clients(camera_id)
+                            await notify_clients(camera_id, has_pose_data)
                     
                     elif msg_type == "disconnect":
                         # 클라이언트에서 종료 요청 - 정상 종료
@@ -444,14 +463,22 @@ async def handle_stream_websocket(websocket: WebSocket, camera_id: str):
                 image_data = latest_image_data[camera_id]
                 timestamp = latest_timestamps[camera_id]
                 
+                # 포즈 데이터도 있으면 같이 전송
+                pose_data = latest_pose_data.get(camera_id)
+                
                 if image_data:
                     # 이미지 메시지 전송
-                    await websocket.send_json({
-                        "type": "image",
+                    message = {
+                        "type": "image" if not pose_data else "image_with_pose",
                         "camera_id": camera_id,
                         "image_data": image_data,
                         "timestamp": timestamp.isoformat()
-                    })
+                    }
+                    
+                    if pose_data:
+                        message["pose_data"] = pose_data
+                    
+                    await websocket.send_json(message)
         
         # 연결 유지 루프
         if not await keep_websocket_alive(websocket):

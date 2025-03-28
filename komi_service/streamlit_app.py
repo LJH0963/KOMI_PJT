@@ -69,6 +69,8 @@ if 'selected_exercise' not in st.session_state:
     st.session_state.selected_exercise = None
 if 'exercises' not in st.session_state:
     st.session_state.exercises = []
+if 'pose_data' not in st.session_state:
+    st.session_state.pose_data = {}  # 카메라 ID별 포즈 데이터 저장
 
 # Base64 이미지 디코딩 함수
 def decode_image(base64_image):
@@ -168,13 +170,29 @@ def get_exercises():
         print(f"운동 목록 요청 오류: {str(e)}")
         return []
 
+# 포즈 데이터 가져오기 함수
+def get_pose_data_from_queue(camera_ids):
+    """이미지 큐에서 포즈 데이터를 가져와 세션 상태에 저장"""
+    for camera_id in camera_ids:
+        if camera_id in image_queues and not image_queues[camera_id].empty():
+            try:
+                img_data = image_queues[camera_id].get(block=False)
+                # 포즈 데이터 저장
+                if "pose_data" in img_data:
+                    st.session_state.pose_data[camera_id] = img_data["pose_data"]
+            except queue.Empty:
+                pass
+
 # 카메라 UI 업데이트 루프
-def update_camera_loop(image_slots, status_slots, connection_indicators, use_sync):
+def update_camera_loop(image_slots, status_slots, connection_indicators, use_sync, pose_data_slots=None):
     try:
         update_interval = 0
         while True:
             update_interval += 1
             update_ui = False
+            
+            # 포즈 데이터 가져오기
+            get_pose_data_from_queue(st.session_state.selected_cameras)
             
             if use_sync and len(st.session_state.selected_cameras) > 1:
                 # 동기화된 프레임 찾기
@@ -184,6 +202,9 @@ def update_camera_loop(image_slots, status_slots, connection_indicators, use_syn
                     for camera_id, frame_data in sync_frames.items():
                         st.session_state.camera_images[camera_id] = frame_data["image"]
                         st.session_state.image_update_time[camera_id] = frame_data["time"]
+                        # 포즈 데이터가 있으면 저장
+                        if "pose_data" in frame_data:
+                            st.session_state.pose_data[camera_id] = frame_data["pose_data"]
                     update_ui = True
             else:
                 # 동기화 없이 각 카메라의 최신 프레임 사용
@@ -193,6 +214,9 @@ def update_camera_loop(image_slots, status_slots, connection_indicators, use_syn
                             img_data = image_queues[camera_id].get(block=False)
                             st.session_state.camera_images[camera_id] = img_data.get("image")
                             st.session_state.image_update_time[camera_id] = img_data.get("time")
+                            # 포즈 데이터가 있으면 저장
+                            if "pose_data" in img_data:
+                                st.session_state.pose_data[camera_id] = img_data["pose_data"]
                             update_ui = True
                         except queue.Empty:
                             pass
@@ -206,6 +230,18 @@ def update_camera_loop(image_slots, status_slots, connection_indicators, use_syn
                             image_slots[camera_id].image(img, use_container_width=True)
                             status_time = st.session_state.image_update_time[camera_id].strftime('%H:%M:%S.%f')[:-3]
                             status_slots[camera_id].text(f"업데이트: {status_time}")
+            
+            # 포즈 데이터 슬롯 업데이트
+            if pose_data_slots:
+                for camera_id in st.session_state.selected_cameras[:2]:
+                    if camera_id in st.session_state.pose_data and st.session_state.pose_data[camera_id]:
+                        # 슬롯에 포즈 데이터 표시
+                        with pose_data_slots[camera_id].container():
+                            with st.expander(f"카메라 {camera_id} 포즈 데이터", expanded=True):
+                                st.json(st.session_state.pose_data[camera_id])
+                    else:
+                        # 데이터가 없을 경우 메시지 표시
+                        pose_data_slots[camera_id].info(f"카메라 {camera_id}의 포즈 데이터가 없습니다.")
             
             # UI 업데이트 간격 (더 빠른 응답성)
             time.sleep(0.05)
@@ -378,6 +414,12 @@ def exercise_webcam():
                     status_slots[camera_id] = st.empty()
                     status_slots[camera_id].text("실시간 스트리밍 준비 중...")
     
+    # 포즈 데이터 디버그 정보 표시 슬롯
+    st.subheader("포즈 감지 데이터 (디버그)")
+    pose_data_slots = {}
+    for i, camera_id in enumerate(st.session_state.selected_cameras[:2]):
+        pose_data_slots[camera_id] = st.empty()
+    
     # 별도 스레드 시작 (단 한번만)
     if 'thread_started' not in st.session_state:
         thread = threading.Thread(
@@ -391,8 +433,8 @@ def exercise_webcam():
         thread.start()
         st.session_state.thread_started = True
     
-    # UI 업데이트 루프 실행
-    update_camera_loop(image_slots, status_slots, connection_indicators, use_sync)
+    # UI 업데이트 루프 수정 - 포즈 데이터 슬롯 전달
+    update_camera_loop(image_slots, status_slots, connection_indicators, use_sync, pose_data_slots)
 
 
 # 카메라 테스트 UI
@@ -470,6 +512,12 @@ def camera_test():
                 status_slots[camera_id] = st.empty()
                 status_slots[camera_id].text("실시간 스트리밍 준비 중...")
     
+    # 포즈 데이터 디버그 정보 표시 슬롯
+    st.subheader("포즈 감지 데이터 (디버그)")
+    pose_data_slots = {}
+    for i, camera_id in enumerate(st.session_state.selected_cameras[:2]):
+        pose_data_slots[camera_id] = st.empty()
+    
     # 별도 스레드 시작 (단 한번만)
     if 'thread_started' not in st.session_state:
         thread = threading.Thread(
@@ -483,9 +531,9 @@ def camera_test():
         thread.start()
         st.session_state.thread_started = True
     
-    # UI 업데이트 루프 실행
-    update_camera_loop(image_slots, status_slots, connection_indicators, use_sync)
- 
+    # UI 업데이트 루프 실행 - 포즈 데이터 슬롯 전달
+    update_camera_loop(image_slots, status_slots, connection_indicators, use_sync, pose_data_slots)
+
 # 전체 앱 라우팅
 def main():
     # 페이지 라우팅

@@ -219,7 +219,10 @@ async def connect_to_camera_stream(camera_id, API_URL, is_running, sync_buffer, 
                         # JSON 메시지 처리
                         try:
                             data = json.loads(msg.data)
-                            if data.get("type") == "image":
+                            msg_type = data.get("type")
+                            
+                            # 이미지 데이터 처리 (일반 이미지 또는 포즈 데이터 포함 이미지)
+                            if msg_type == "image" or msg_type == "image_with_pose":
                                 # 이미지 데이터 처리
                                 image_data = data.get("image_data")
                                 if image_data:
@@ -245,138 +248,144 @@ async def connect_to_camera_stream(camera_id, API_URL, is_running, sync_buffer, 
                                             "time": timestamp
                                         }
                                         
+                                        # 포즈 데이터가 있으면 저장
+                                        if msg_type == "image_with_pose" and "pose_data" in data:
+                                            frame_data["pose_data"] = data["pose_data"]
+                                        
                                         if camera_id in sync_buffer:
                                             sync_buffer[camera_id].append(frame_data)
                                         
-                                        # 이미지 큐에도 저장
-                                        if camera_id not in image_queues:
-                                            image_queues[camera_id] = queue.Queue(maxsize=1)
-                                        
-                                        if not image_queues[camera_id].full():
+                                        # 이미지 큐에 추가
+                                        if camera_id in image_queues:
+                                            # 큐가 꽉 찬 경우 오래된 항목 제거
+                                            if image_queues[camera_id].qsize() >= 10:
+                                                try:
+                                                    image_queues[camera_id].get_nowait()
+                                                except queue.Empty:
+                                                    pass
+                                            
+                                            # 새 프레임 추가 (포즈 데이터 포함)
                                             image_queues[camera_id].put(frame_data)
+                            
+                            # 포즈 데이터 업데이트 알림 처리
+                            elif msg_type == "image_update_with_pose":
+                                pass  # 필요에 따라 구현
+                                
                         except json.JSONDecodeError:
-                            # JSON 오류 무시
+                            # JSON 디코딩 오류는 무시
                             pass
                 except asyncio.TimeoutError:
-                    # 타임아웃은 정상이므로 무시
+                    # 타임아웃은 정상, 계속 진행
                     pass
-    except asyncio.TimeoutError:
-        # 연결 타임아웃
-        update_connection_status(camera_id, "disconnected")
-    except aiohttp.ClientConnectorError:
-        # 서버 연결 실패
-        update_connection_status(camera_id, "disconnected")
-    except Exception:
-        # 기타 예외
-        update_connection_status(camera_id, "disconnected")
+                except Exception as e:
+                    # 다른 오류는 루프 탈출
+                    print(f"WebSocket 수신 오류: {camera_id} - {str(e)}")
+                    break
+                
+                # 짧은 딜레이로 CPU 사용률 감소
+                await asyncio.sleep(0.01)
+            
+            # 루프 종료 시 연결 종료
+            await ws.close()
     
-    # 함수 종료시 연결 해제 상태로 설정
+    except Exception as e:
+        # 연결 실패 처리
+        print(f"카메라 {camera_id} 스트림 연결 오류: {str(e)}")
+        update_connection_status(camera_id, "disconnected")
+        return False
+    
+    # 연결 종료됨
     update_connection_status(camera_id, "disconnected")
-    
-    # 지수 백오프로 재연결 지연 계산 (최대 30초)
-    backoff_delay = min(30, RECONNECT_DELAY * (2 ** (connection_attempts[camera_id] - 1)))
-    await asyncio.sleep(backoff_delay)
-    
     return False
 
-# 비동기 이미지 업데이트 함수
+# 선택된 카메라에 대한 이미지 업데이트 및 동기화 처리
 async def update_images(API_URL, selected_cameras, is_running, sync_buffer, server_time_offset, 
                        last_time_sync, TIME_SYNC_INTERVAL, thread_pool):
-    """백그라운드에서 이미지를 가져오는 함수 (WebSocket 기반)"""
+    """선택된 카메라들의 이미지 스트림 수신 및 동기화"""
+    global image_queues
     
-    # 세션 초기화
-    await init_session()
+    # 각 카메라별 큐 초기화
+    for camera_id in selected_cameras:
+        if camera_id not in image_queues:
+            image_queues[camera_id] = queue.Queue(maxsize=20)
     
-    # 초기 서버 시간 동기화
-    server_time_offset, last_time_sync, _ = await sync_server_time(
-        API_URL, server_time_offset, last_time_sync, TIME_SYNC_INTERVAL
-    )
+    # 동기화 버퍼 초기화
+    for camera_id in selected_cameras:
+        if camera_id not in sync_buffer:
+            sync_buffer[camera_id] = collections.deque(maxlen=10)
     
-    # 카메라별 WebSocket 연결 태스크 저장
-    stream_tasks = {}
+    # 카메라별 연결 관리 태스크 시작
+    camera_tasks = {}
     
-    try:
-        while is_running:
-            # 주기적 서버 시간 동기화 - 현재 시간과 비교하여 판단
-            if time.time() - last_time_sync >= TIME_SYNC_INTERVAL:
-                server_time_offset, last_time_sync, _ = await sync_server_time(
-                    API_URL, server_time_offset, last_time_sync, TIME_SYNC_INTERVAL
-                )
-            
-            # 전역 변수로 카메라 ID 목록 확인
-            camera_ids = selected_cameras
-            
-            if camera_ids:
-                # 기존 스트림 중 필요없는 것 종료
-                for camera_id in list(stream_tasks.keys()):
-                    if camera_id not in camera_ids:
-                        if not stream_tasks[camera_id].done():
-                            stream_tasks[camera_id].cancel()
-                        del stream_tasks[camera_id]
-                
-                # 새 카메라에 대한 WebSocket 스트림 시작
-                for camera_id in camera_ids:
-                    if camera_id not in stream_tasks or stream_tasks[camera_id].done():
-                        # 재연결 시도할 때 약간의 지연 추가 (무작위)
-                        jitter = random.uniform(0, 0.5)
-                        await asyncio.sleep(jitter)
-                        stream_tasks[camera_id] = asyncio.create_task(
-                            connect_to_camera_stream(
-                                camera_id, API_URL, is_running, sync_buffer, thread_pool
-                            )
-                        )
-            
-            # 요청 간격 조절
-            await asyncio.sleep(0.1)
-    except asyncio.CancelledError:
-        # 정상적인 취소, 조용히 처리
-        pass
-    except Exception:
-        # 다른 예외, 조용히 처리
-        pass
-    finally:
-        # 모든 스트림 태스크 취소
-        for task in stream_tasks.values():
-            if not task.done():
-                task.cancel()
-        
-        # 사용했던 세션 정리
-        await close_session()
-    
-    return server_time_offset, last_time_sync
-
-# 백그라운드 스레드에서 비동기 루프 실행
-def run_async_loop(API_URL, selected_cameras, is_running, sync_buffer, server_time_offset, 
-                  last_time_sync, TIME_SYNC_INTERVAL, process_image_callback, thread_pool):
-    """비동기 루프를 실행하는 스레드 함수"""
-    # 이미지 처리 콜백 설정
-    set_image_processor(process_image_callback)
-    
-    # 이 스레드 전용 이벤트 루프 생성
-    loop = get_event_loop()
-    
-    try:
-        # 이미지 업데이트 태스크 생성
-        task = loop.create_task(
-            update_images(
-                API_URL, selected_cameras, is_running, sync_buffer, server_time_offset, 
-                last_time_sync, TIME_SYNC_INTERVAL, thread_pool
-            )
+    while is_running:
+        # 서버 시간 동기화
+        server_time_offset, last_time_sync, _ = await sync_server_time(
+            API_URL, server_time_offset, last_time_sync, TIME_SYNC_INTERVAL
         )
         
-        # 이벤트 루프 실행
-        loop.run_until_complete(task)
+        # 선택된 카메라 변경 감지 및 동기화
+        for camera_id in list(camera_tasks.keys()):
+            if camera_id not in selected_cameras:
+                # 제거된 카메라 작업 취소
+                if not camera_tasks[camera_id].done():
+                    camera_tasks[camera_id].cancel()
+                del camera_tasks[camera_id]
+        
+        # 새로운 카메라 연결 작업 시작
+        for camera_id in selected_cameras:
+            if camera_id not in camera_tasks or camera_tasks[camera_id].done():
+                # 새 작업 생성
+                camera_tasks[camera_id] = asyncio.create_task(
+                    connect_to_camera_stream(camera_id, API_URL, is_running, sync_buffer, thread_pool)
+                )
+        
+        # 카메라 작업 상태 확인 및 오류 처리
+        for camera_id, task in list(camera_tasks.items()):
+            if task.done():
+                exception = task.exception()
+                if exception:
+                    print(f"카메라 {camera_id} 작업 오류: {str(exception)}")
+                
+                # 재연결 시도
+                camera_tasks[camera_id] = asyncio.create_task(
+                    connect_to_camera_stream(camera_id, API_URL, is_running, sync_buffer, thread_pool)
+                )
+        
+        # 주기적인 작업 대기
+        await asyncio.sleep(1.0)
+    
+    # 종료 시 모든 작업 취소
+    for task in camera_tasks.values():
+        if not task.done():
+            task.cancel()
+    
+    # 모든 작업 완료 대기
+    await asyncio.gather(*camera_tasks.values(), return_exceptions=True)
+
+# 이미지 처리 비동기 스레드 실행
+def run_async_loop(API_URL, selected_cameras, is_running, sync_buffer, server_time_offset, 
+                  last_time_sync, TIME_SYNC_INTERVAL, process_image_callback, thread_pool):
+    """비동기 이미지 처리 메인 루프 (별도 스레드에서 실행)"""
+    try:
+        # 이미지 처리 콜백 설정
+        set_image_processor(process_image_callback)
+        
+        # 이벤트 루프 설정
+        loop = get_event_loop()
+        
+        # 비동기 태스크 실행
+        loop.run_until_complete(
+            update_images(
+                API_URL, selected_cameras, is_running, sync_buffer, 
+                server_time_offset, last_time_sync, TIME_SYNC_INTERVAL, thread_pool
+            )
+        )
     except Exception as e:
         print(f"비동기 루프 오류: {str(e)}")
     finally:
-        # 모든 태스크 취소
-        for task in asyncio.all_tasks(loop):
-            task.cancel()
-        
-        # 취소된 태스크 완료 대기
-        if asyncio.all_tasks(loop):
-            loop.run_until_complete(asyncio.gather(*asyncio.all_tasks(loop), return_exceptions=True))
-        
-        # 루프 중지
-        loop.stop()
+        # 리소스 정리
+        try:
+            loop.run_until_complete(close_session())
+        except:
+            pass
 
