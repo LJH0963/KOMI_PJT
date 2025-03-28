@@ -383,36 +383,24 @@ def exercise_webcam():
         
         # 카메라 개수에 따라 다르게 표시
         camera_count = len(st.session_state.selected_cameras)
+        view_types = ["정면", "측면"]
         
-        if camera_count == 1:
-            # 카메라가 1대인 경우 정면으로 표시
-            camera_id = st.session_state.selected_cameras[0]
-            with cols[0]:
+        # 선택된 카메라 수에 따라 처리 (최대 2대)
+        for i, camera_id in enumerate(st.session_state.selected_cameras[:2]):
+            # 카메라가 1대인 경우 항상 정면, 2대인 경우 첫 번째는 정면, 두 번째는 측면
+            view_type = "정면" if (camera_count == 1 or i == 0) else "측면"
+            
+            with cols[i]:
                 header_col1, header_col2 = st.columns([4, 1])
                 with header_col1:
-                    # st.subheader(f"정면 카메라: {camera_id}")
-                    st.subheader(f"정면")
+                    # st.subheader(f"{view_type} 카메라: {camera_id}")
+                    st.subheader(view_type)
                 with header_col2:
                     connection_indicators[camera_id] = st.empty()
                 
                 image_slots[camera_id] = st.empty()
                 status_slots[camera_id] = st.empty()
                 status_slots[camera_id].text("실시간 스트리밍 준비 중...")
-        else:
-            # 카메라가 2대인 경우 정면/측면으로 표시
-            for i, camera_id in enumerate(st.session_state.selected_cameras[:2]):
-                # view_type = "정면" if i == 0 else "측면"
-                with cols[i]:
-                    header_col1, header_col2 = st.columns([4, 1])
-                    with header_col1:
-                        # st.subheader(f"{view_type} 카메라: {camera_id}")
-                        st.subheader(f"측면")
-                    with header_col2:
-                        connection_indicators[camera_id] = st.empty()
-                    
-                    image_slots[camera_id] = st.empty()
-                    status_slots[camera_id] = st.empty()
-                    status_slots[camera_id].text("실시간 스트리밍 준비 중...")
     
     # 포즈 데이터 디버그 정보 표시 슬롯
     st.subheader("포즈 감지 데이터 (디버그)")
