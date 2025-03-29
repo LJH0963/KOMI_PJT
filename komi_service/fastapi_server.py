@@ -124,13 +124,21 @@ async def get_exercises():
     """사용 가능한 운동 목록 조회"""
     return {"exercises": exercise_data["exercises"]}
 
-# 카메라 켜기/끄기 엔드포인트
-@app.post("/cameras/{camera_id}/power")
-async def camera_power_control(
+# 카메라 상태 제어 엔드포인트
+@app.post("/cameras/{camera_id}/status")
+async def camera_status_control(
     camera_id: str,
-    power_status: bool = Body(..., embed=True)
+    status: str = Body(..., embed=True)
 ):
-    """카메라 전원 제어 (켜기/끄기)"""
+    """카메라 상태 제어 (off, on, ready, record, detect)"""
+    valid_statuses = ["off", "on", "ready", "record", "detect"]
+    
+    if status not in valid_statuses:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"유효하지 않은 상태입니다. 유효한 상태: {', '.join(valid_statuses)}"
+        )
+    
     with data_lock:
         if camera_id not in camera_info:
             raise HTTPException(status_code=404, detail="카메라를 찾을 수 없습니다")
@@ -142,21 +150,46 @@ async def camera_power_control(
             # 카메라 클라이언트에 명령 전송
             websocket = camera_info[camera_id]["websocket"]
             await websocket.send_json({
-                "type": "power_control",
-                "power": power_status
+                "type": "status_control",
+                "status": status
             })
             
             # 카메라 상태 업데이트
-            camera_info[camera_id]["power_status"] = "on" if power_status else "off"
+            camera_info[camera_id]["status"] = status
             
             return {
                 "status": "success",
                 "camera_id": camera_id,
-                "power": "on" if power_status else "off",
-                "message": f"카메라가 {'켜졌습니다' if power_status else '꺼졌습니다'}"
+                "camera_status": status,
+                "message": f"카메라 상태가 '{status}'로 변경되었습니다"
             }
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"카메라 제어 중 오류 발생: {str(e)}")
+
+# 카메라 상태 조회 엔드포인트
+@app.get("/cameras/{camera_id}/status")
+async def get_camera_status(camera_id: str):
+    """카메라 상태 조회"""
+    with data_lock:
+        if camera_id not in camera_info:
+            raise HTTPException(status_code=404, detail="카메라를 찾을 수 없습니다")
+        
+        # 기본 응답 정보
+        response = {
+            "camera_id": camera_id,
+            "connected": "websocket" in camera_info[camera_id],
+            "status": camera_info[camera_id].get("status", "off")
+        }
+        
+        # 녹화 중인 경우 추가 정보
+        if response["status"] == "record" and "recording_start_time" in camera_info[camera_id]:
+            start_time = camera_info[camera_id]["recording_start_time"]
+            response["recording"] = {
+                "start_time": start_time,
+                "duration_seconds": (datetime.now() - datetime.fromisoformat(start_time)).total_seconds()
+            }
+        
+        return response
 
 @app.get("/exercise/{exercise_id}")
 async def get_exercise_detail(exercise_id: str):

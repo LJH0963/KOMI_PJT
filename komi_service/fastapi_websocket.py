@@ -16,7 +16,7 @@ latest_timestamps: Dict[str, datetime] = {}
 latest_pose_data: Dict[str, dict] = {}  # 카메라 ID별 포즈 데이터 저장
 active_connections: Set[WebSocket] = set()
 camera_info: Dict[str, dict] = {}
-data_lock = threading.Lock()
+data_lock = threading.RLock()
 
 # 웹소켓 연결 재시도 관련 설정
 MAX_RECONNECT_ATTEMPTS = 5
@@ -31,7 +31,8 @@ app_state = {
     "connected_cameras": 0,
     "active_websockets": 0,
     "start_time": datetime.now(),
-    "last_connection_cleanup": datetime.now()
+    "last_connection_cleanup": datetime.now(),
+    "background_tasks": []
 }
 
 # 공통 유틸리티 함수
@@ -60,14 +61,30 @@ def process_image_in_thread(image_data):
 # FastAPI 웹소켓 관련 함수
 @asynccontextmanager
 async def lifespan_manager(app):
+    """FastAPI 애플리케이션 수명 주기 관리"""
+    app_state["is_running"] = True
     app_state["start_time"] = datetime.now()
-    app_state["last_connection_cleanup"] = datetime.now()
-    # cleanup_connections 태스크 시작
-    cleanup_task = asyncio.create_task(cleanup_connections())
+    app_state["background_tasks"] = []
+    
     yield
+    
+    # 종료 처리
     app_state["is_running"] = False
-    # 태스크가 완료될 때까지 기다림
-    await cleanup_task
+    
+    # 연결된 모든 웹소켓 종료
+    with data_lock:
+        for ws in active_connections.copy():
+            try:
+                await ws.close()
+            except Exception:
+                pass
+        active_connections.clear()
+    
+    # 백그라운드 태스크 종료
+    for task in app_state["background_tasks"]:
+        task.cancel()
+    
+    await asyncio.gather(*app_state["background_tasks"], return_exceptions=True)
 
 async def disconnect_camera(camera_id: str):
     """카메라 연결 해제 및 리소스 정리"""
@@ -272,223 +289,191 @@ async def keep_websocket_alive(websocket: WebSocket):
     return True
 
 async def handle_websocket_connection(websocket: WebSocket):
-    """웹소켓 클라이언트 연결 처리"""
+    """일반 클라이언트 웹소켓 연결 처리"""
     await websocket.accept()
     
-    # 연결 목록에 추가
-    active_connections.add(websocket)
-    
-    # 상태 업데이트
-    app_state["active_websockets"] = len(active_connections)
-    
-    # 초기 카메라 목록 전송
     with data_lock:
-        active_cameras = list(camera_info.keys())
+        active_connections.add(websocket)
     
     try:
-        # 초기 데이터 전송
-        await websocket.send_json({
-            "type": "init",
-            "cameras": active_cameras,
-            "timestamp": datetime.now().isoformat()
-        })
-        
-        # 연결 유지 루프
-        if not await keep_websocket_alive(websocket):
-            # 연결 유지 실패
-            pass
-    except Exception:
-        # 오류 처리
-        pass
+        while app_state["is_running"]:
+            # 클라이언트에서 전송된 메시지 수신
+            msg = await websocket.receive_text()
+            
+            # 주기적인 업데이트 요청 처리
+            if msg == "get_updates":
+                with data_lock:
+                    # 카메라 정보 반환
+                    active_cameras = [
+                        {"id": camera_id, "status": info.get("status", "disconnected")}
+                        for camera_id, info in camera_info.items()
+                        if "websocket" in info
+                    ]
+                
+                await websocket.send_json({
+                    "type": "camera_update",
+                    "cameras": active_cameras,
+                    "timestamp": time.time()
+                })
+    except Exception as e:
+        print(f"웹소켓 오류: {str(e)}")
     finally:
-        # 연결 목록에서 제거
-        active_connections.discard(websocket)
-        # 상태 업데이트
-        app_state["active_websockets"] = len(active_connections)
+        with data_lock:
+            if websocket in active_connections:
+                active_connections.remove(websocket)
 
 async def handle_camera_websocket(websocket: WebSocket):
-    """웹캠 클라이언트의 WebSocket 연결 처리"""
+    """카메라 클라이언트 웹소켓 연결 처리"""
     await websocket.accept()
-    
     camera_id = None
+    
     try:
-        # 첫 메시지에서 카메라 ID 확인 또는 생성
-        first_message = await asyncio.wait_for(websocket.receive_text(), timeout=10)
-        data = json.loads(first_message)
+        # 카메라 등록 메시지 수신
+        data = await websocket.receive_json()
         
         if data.get("type") == "register":
             camera_id = data.get("camera_id")
+            info = data.get("info", {})
             
-            # 기존 동일 ID 카메라가 있으면 연결 해제
-            if camera_id in camera_info:
-                await disconnect_camera(camera_id)
-        
-        # 새 카메라 ID 생성
-        if not camera_id:
-            camera_id = f"webcam_{len(camera_info) + 1}"
-        
-        # 카메라 정보 저장
-        with data_lock:
-            camera_info[camera_id] = {
-                "info": data.get("info", {}),
-                "last_seen": datetime.now(),
-                "websocket": websocket,
-                "subscribers": set()  # 구독자 목록 초기화
-            }
-        
-        # 카메라에 ID 전송
-        await websocket.send_json({
-            "type": "connection_successful",
-            "camera_id": camera_id
-        })
-        
-        # 연결 유지 및 프레임 수신 루프
-        last_seen = datetime.now()
-        last_keepalive = time.time()
-        keepalive_interval = 15  # 15초마다 핑 전송
-        
-        while True:
-            try:
-                # 짧은 타임아웃으로 메시지 수신 대기
-                message = await asyncio.wait_for(websocket.receive_text(), timeout=1.0)
+            if not camera_id:
+                await websocket.close(code=1000, reason="카메라 ID가 필요합니다")
+                return
+            
+            # 카메라 정보 저장
+            with data_lock:
+                if camera_id in camera_info and "websocket" in camera_info[camera_id]:
+                    old_ws = camera_info[camera_id]["websocket"]
+                    try:
+                        await old_ws.close(code=1000, reason="다른 연결에 의해 대체됨")
+                    except Exception:
+                        pass
                 
-                # 핑/퐁 처리
-                if message == "ping":
-                    await websocket.send_text("pong")
-                    last_seen = datetime.now()
-                    continue
-                elif message == "pong":
-                    last_seen = datetime.now()
-                    continue
-                
-                # JSON 메시지 파싱
+                camera_info[camera_id] = {
+                    "websocket": websocket,
+                    "connected_at": datetime.now().isoformat(),
+                    "info": info,
+                    "status": "off"  # 초기 상태는 꺼짐
+                }
+            
+            # 연결 성공 응답
+            await websocket.send_json({
+                "type": "connection_successful",
+                "camera_id": camera_id
+            })
+            
+            # 다른 클라이언트에 카메라 연결 알림
+            for ws in active_connections:
                 try:
-                    data = json.loads(message)
-                    
-                    # 타입별 메시지 처리
-                    msg_type = data.get("type")
-                    
-                    if msg_type == "frame" or msg_type == "frame_with_pose":
-                        # 프레임 저장
-                        image_data = data.get("image_data")
-                        if image_data:
-                            timestamp = datetime.now()
-                            last_seen = timestamp
-                            
-                            # 이미지 저장
-                            with data_lock:
-                                latest_image_data[camera_id] = image_data
-                                latest_timestamps[camera_id] = timestamp
-                                
-                                # 포즈 데이터가 있으면 저장
-                                has_pose_data = False
-                                if "pose_data" in data and data["pose_data"]:
-                                    latest_pose_data[camera_id] = data["pose_data"]
-                                    has_pose_data = True
-                                
-                                # 카메라 상태 업데이트
-                                if camera_id in camera_info:
-                                    camera_info[camera_id]["last_seen"] = timestamp
-                            
-                            # 구독자에게 이미지 직접 전송 (포즈 데이터 포함)
-                            pose_data = data.get("pose_data") if has_pose_data else None
-                            await broadcast_image_to_subscribers(camera_id, image_data, timestamp, pose_data)
-                            
-                            # 일반 웹소켓 클라이언트에게 알림
-                            await notify_clients(camera_id, has_pose_data)
-                    
-                    elif msg_type == "disconnect":
-                        # 클라이언트에서 종료 요청 - 정상 종료
-                        break
-                        
-                except json.JSONDecodeError:
-                    # JSON 파싱 오류는 무시
+                    await ws.send_json({
+                        "type": "camera_connected",
+                        "camera_id": camera_id,
+                        "info": info
+                    })
+                except Exception:
                     pass
+            
+            # 메시지 루프
+            while app_state["is_running"]:
+                msg = await websocket.receive_json()
                 
-                # 정기적인 핑 전송
-                current_time = time.time()
-                if current_time - last_keepalive >= keepalive_interval:
-                    try:
-                        await websocket.send_text("ping")
-                        last_keepalive = current_time
-                    except Exception:
-                        # 핑 전송 실패 시 연결 종료
-                        break
+                # 프레임 처리는 스트림 웹소켓에서 수행하므로 여기서는 다른 메시지 처리
+                msg_type = msg.get("type", "")
+                
+                # 상태 변경 알림 처리
+                if msg_type == "status_changed":
+                    new_status = msg.get("status")
+                    with data_lock:
+                        if camera_id in camera_info:
+                            camera_info[camera_id]["status"] = new_status
+                
+                # 녹화 완료 알림 처리
+                elif msg_type == "recording_completed":
+                    video_path = msg.get("video_path")
+                    duration = msg.get("duration", 0)
                     
-            except asyncio.TimeoutError:
-                # 타임아웃은 정상적인 상황, 핑 체크만 수행
-                current_time = time.time()
-                if current_time - last_keepalive >= keepalive_interval:
-                    try:
-                        await websocket.send_text("ping")
-                        last_keepalive = current_time
-                    except Exception:
-                        # 핑 전송 실패 시 연결 종료
-                        break
-                
-                # 장시간 메시지가 없는지 확인 (45초 이상)
-                if (datetime.now() - last_seen).total_seconds() > 45:
-                    # 너무 오래 메시지가 없으면 연결 종료
-                    break
-            except Exception:
-                # 기타 예외 발생 시 연결 종료
-                break
-    except Exception:
-        pass
+                    with data_lock:
+                        if camera_id in camera_info:
+                            camera_info[camera_id]["last_recording"] = {
+                                "path": video_path,
+                                "duration": duration,
+                                "completed_at": datetime.now().isoformat()
+                            }
+                    
+                    # 다른 클라이언트에 녹화 완료 알림
+                    for ws in active_connections:
+                        try:
+                            await ws.send_json({
+                                "type": "recording_completed",
+                                "camera_id": camera_id,
+                                "video_path": video_path,
+                                "duration": duration
+                            })
+                        except Exception:
+                            pass
+        
+    except Exception as e:
+        print(f"카메라 웹소켓 오류: {str(e)}")
     finally:
-        # 연결 종료 처리 - 완전히 삭제
         if camera_id:
-            await disconnect_camera(camera_id)
+            with data_lock:
+                if camera_id in camera_info:
+                    # 웹소켓 필드만 삭제하고 다른 정보는 유지
+                    if "websocket" in camera_info[camera_id]:
+                        del camera_info[camera_id]["websocket"]
+                    camera_info[camera_id]["disconnected_at"] = datetime.now().isoformat()
+                    camera_info[camera_id]["status"] = "disconnected"
+            
+            # 다른 클라이언트에 카메라 연결 해제 알림
+            for ws in active_connections:
+                try:
+                    await ws.send_json({
+                        "type": "camera_disconnected",
+                        "camera_id": camera_id
+                    })
+                except Exception:
+                    pass
 
 async def handle_stream_websocket(websocket: WebSocket, camera_id: str):
-    """특정 카메라의 이미지를 WebSocket으로 스트리밍"""
+    """이미지 스트리밍을 위한 웹소켓 연결 처리"""
+    # 클라이언트 연결 수락
     await websocket.accept()
     
-    # 해당 카메라가 존재하는지 확인
-    if camera_id not in camera_info:
-        await websocket.close(code=1008, reason=f"카메라 ID {camera_id}를 찾을 수 없습니다")
-        return
+    # 스트리밍 클라이언트 정보
+    streaming_info = {
+        "websocket": websocket,
+        "camera_id": camera_id,
+        "connected_at": datetime.now().isoformat(),
+        "last_frame_time": None
+    }
     
-    # 해당 카메라의 실시간 스트리밍을 구독하는 클라이언트 등록
+    # 등록된 카메라인지 확인
     with data_lock:
-        if "subscribers" not in camera_info[camera_id]:
-            camera_info[camera_id]["subscribers"] = set()
+        if camera_id not in camera_info or "websocket" not in camera_info[camera_id]:
+            await websocket.close(code=1000, reason="카메라가 연결되어 있지 않습니다")
+            return
         
-        camera_info[camera_id]["subscribers"].add(websocket)
+        # 스트리밍 클라이언트 추가
+        if "streaming_clients" not in camera_info[camera_id]:
+            camera_info[camera_id]["streaming_clients"] = []
+        
+        camera_info[camera_id]["streaming_clients"].append(streaming_info)
     
     try:
-        # 최신 이미지가 있으면 즉시 전송
-        with data_lock:
-            if camera_id in latest_image_data and camera_id in latest_timestamps:
-                image_data = latest_image_data[camera_id]
-                timestamp = latest_timestamps[camera_id]
-                
-                # 포즈 데이터도 있으면 같이 전송
-                pose_data = latest_pose_data.get(camera_id)
-                
-                if image_data:
-                    # 이미지 메시지 전송
-                    message = {
-                        "type": "image" if not pose_data else "image_with_pose",
-                        "camera_id": camera_id,
-                        "image_data": image_data,
-                        "timestamp": timestamp.isoformat()
-                    }
-                    
-                    if pose_data:
-                        message["pose_data"] = pose_data
-                    
-                    await websocket.send_json(message)
-        
-        # 연결 유지 루프
-        if not await keep_websocket_alive(websocket):
-            # 연결 유지 실패
-            pass
-    except Exception:
-        # 예외 처리
-        pass
+        # 클라이언트 연결 유지
+        while app_state["is_running"]:
+            # 메시지 수신 (필요한 경우)
+            await asyncio.sleep(1)
+    
+    except Exception as e:
+        print(f"스트림 웹소켓 오류: {str(e)}")
     finally:
-        # 구독 목록에서 제거
+        # 스트리밍 클라이언트 목록에서 제거
         with data_lock:
-            if camera_id in camera_info and "subscribers" in camera_info[camera_id]:
-                camera_info[camera_id]["subscribers"].discard(websocket)
+            if (camera_id in camera_info and 
+                "streaming_clients" in camera_info[camera_id]):
+                
+                # 현재 클라이언트 제거
+                camera_info[camera_id]["streaming_clients"] = [
+                    client for client in camera_info[camera_id]["streaming_clients"]
+                    if client["websocket"] != websocket
+                ]
