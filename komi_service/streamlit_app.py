@@ -1,551 +1,517 @@
 import streamlit as st
-
-# 페이지 설정
-st.set_page_config(page_title="KOMI 모니터링", layout="wide")
-
-import json
-import time
-import numpy as np
-import cv2
-import base64
-from datetime import datetime, timedelta
-from PIL import Image
 import asyncio
+import aiohttp
 import threading
-from concurrent.futures import ThreadPoolExecutor
+import json
+import base64
+import time
+from datetime import datetime
+from PIL import Image
+import io
+import concurrent.futures
 import queue
-import collections
-import random
-import requests
+import numpy as np
 
-# 웹소켓 관련 함수 임포트 - 실제 사용하는 함수만 임포트
-from streamlit_websocket import (
-    run_async, async_get_cameras, run_async_loop, 
-    image_queues, ws_connection_status
-)
-
-# 서버 URL 설정
+# 전역 변수 설정
 API_URL = "http://localhost:8000"
+camera_ids = ["front", "side"]  # 전면 카메라와 측면 카메라
 
-# Streamlit의 query parameter를 사용하여 서버 URL을 설정
-if 'server_url' in st.query_params:
-    API_URL = st.query_params['server_url']
-
-# 스레드 안전 데이터 구조
+# 스레드 로컬 스토리지
+thread_local = threading.local()
+connection_status = {}
+connection_attempts = {}
+image_queues = {}
+latest_images = {}
+latest_pose_data = {}
 is_running = True
-selected_cameras = []
 
-# 서버 시간 동기화 관련 변수
-server_time_offset = 0.0  # 서버와의 시간차 (초 단위)
-last_time_sync = 0  # 마지막 시간 동기화 시간
-TIME_SYNC_INTERVAL = 300  # 5분으로 간격 증가
+# 스레드 풀 초기화
+thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 
-# 동기화 버퍼 설정
-sync_buffer = {}  # 카메라 ID -> 최근 프레임 버퍼 (collections.deque)
-SYNC_BUFFER_SIZE = 10  # 각 카메라별 버퍼 크기
-MAX_SYNC_DIFF_MS = 100  # 프레임 간 최대 허용 시간 차이 (밀리초)
+def get_session():
+    """현재 스레드의 세션 반환 (없으면 생성)"""
+    if not hasattr(thread_local, "session"):
+        thread_local.session = None
+    return thread_local.session
 
-# 이미지 처리를 위한 스레드 풀
-thread_pool = ThreadPoolExecutor(max_workers=4)
+def get_event_loop():
+    """현재 스레드의 이벤트 루프 반환 (없으면 생성)"""
+    if not hasattr(thread_local, "loop"):
+        thread_local.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(thread_local.loop)
+    return thread_local.loop
 
-# 세션 상태 초기화
-if 'selected_cameras' not in st.session_state:
-    st.session_state.selected_cameras = []
-if 'cameras' not in st.session_state:
-    st.session_state.cameras = []
-if 'server_status' not in st.session_state:
-    st.session_state.server_status = None
-if 'camera_images' not in st.session_state:
-    st.session_state.camera_images = {}
-if 'image_update_time' not in st.session_state:
-    st.session_state.image_update_time = {}
-if 'sync_status' not in st.session_state:
-    st.session_state.sync_status = "준비 중..."
-if 'connection_status' not in st.session_state:
-    st.session_state.connection_status = {}
-if 'page' not in st.session_state:
-    st.session_state.page = "main"
-if 'selected_exercise' not in st.session_state:
-    st.session_state.selected_exercise = None
-if 'exercises' not in st.session_state:
-    st.session_state.exercises = []
-if 'pose_data' not in st.session_state:
-    st.session_state.pose_data = {}  # 카메라 ID별 포즈 데이터 저장
+async def init_session():
+    """비동기 세션 초기화 (스레드별)"""
+    if not get_session():
+        # 향상된 타임아웃 설정으로 세션 생성
+        timeout = aiohttp.ClientTimeout(total=30, connect=5, sock_connect=5, sock_read=5)
+        thread_local.session = aiohttp.ClientSession(timeout=timeout)
+    return thread_local.session
 
-# Base64 이미지 디코딩 함수
-def decode_image(base64_image):
-    """Base64 인코딩된 이미지를 디코딩하여 numpy 배열로 변환"""
+async def close_session():
+    """현재 스레드의 세션 닫기"""
+    session = get_session()
+    if session:
+        await session.close()
+        thread_local.session = None
+
+def update_connection_status(camera_id, status):
+    """카메라 연결 상태 업데이트"""
+    connection_status[camera_id] = status
+
+# 비동기 HTTP 요청 함수
+async def fetch_data(url, method="GET", data=None):
+    """HTTP 요청 수행"""
+    session = await init_session()
     try:
-        if not base64_image:
-            return None
-        img_data = base64.b64decode(base64_image)
-        np_arr = np.frombuffer(img_data, np.uint8)
-        image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-        return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        if method == "GET":
+            async with session.get(url) as response:
+                if response.status == 200:
+                    return await response.json()
+        elif method == "POST":
+            async with session.post(url, json=data) as response:
+                if response.status == 200:
+                    return await response.json()
     except Exception as e:
-        print(f"이미지 디코딩 오류: {str(e)}")
-        return None
-
-# 스레드에서 이미지 디코딩 처리
-def process_image_in_thread(image_data):
-    """별도 스레드에서 이미지 처리"""
-    try:
-        if not image_data:
-            return None
-        return decode_image(image_data)  # Base64 이미지인 경우
-    except Exception as e:
-        print(f"이미지 처리 오류: {str(e)}")
-        return None
-
-# 동기화 버퍼 초기화
-def init_sync_buffer(camera_ids):
-    """동기화 버퍼 초기화 함수"""
-    global sync_buffer
-    for camera_id in camera_ids:
-        if camera_id not in sync_buffer:
-            sync_buffer[camera_id] = collections.deque(maxlen=SYNC_BUFFER_SIZE)
-
-# 동기화된 프레임 쌍 찾기
-def find_synchronized_frames():
-    """여러 카메라에서 타임스탬프가 가장 가까운 프레임 쌍 찾기"""
-    global sync_buffer
-    
-    if len(st.session_state.selected_cameras) < 2:
-        return None
-    
-    if not all(camera_id in sync_buffer and len(sync_buffer[camera_id]) > 0 
-               for camera_id in st.session_state.selected_cameras):
-        return None
-    
-    # 가장 최근의 타임스탬프 기준으로 시작
-    latest_frame_times = {
-        camera_id: max([frame["time"] for frame in sync_buffer[camera_id]])
-        for camera_id in st.session_state.selected_cameras
-    }
-    
-    # 가장 늦은 타임스탬프 찾기
-    reference_time = min(latest_frame_times.values())
-    
-    # 각 카메라에서 기준 시간과 가장 가까운 프레임 찾기
-    best_frames = {}
-    for camera_id in st.session_state.selected_cameras:
-        closest_frame = min(
-            [frame for frame in sync_buffer[camera_id]],
-            key=lambda x: abs((x["time"] - reference_time).total_seconds())
-        )
-        
-        # 시간 차이가 허용 범위 내인지 확인
-        time_diff_ms = abs((closest_frame["time"] - reference_time).total_seconds() * 1000)
-        if time_diff_ms <= MAX_SYNC_DIFF_MS:
-            best_frames[camera_id] = closest_frame
-        else:
-            return None
-    
-    # 모든 카메라에 대해 프레임을 찾았는지 확인
-    if len(best_frames) == len(st.session_state.selected_cameras):
-        # 동기화 상태 업데이트
-        max_diff = max([abs((f["time"] - reference_time).total_seconds() * 1000) 
-                        for f in best_frames.values()])
-        st.session_state.sync_status = f"동기화됨 (최대 차이: {max_diff:.1f}ms)"
-        return best_frames
-    
+        st.error(f"데이터 요청 실패: {str(e)}")
     return None
-
-# 동기 카메라 목록 가져오기 (Streamlit 호환용)
-def get_cameras():
-    """카메라 목록 가져오기 (동기 래퍼)"""
-    cameras, status = run_async(async_get_cameras(API_URL))
-    st.session_state.server_status = status
-    return cameras
 
 # 운동 목록 가져오기
 def get_exercises():
-    """운동 목록 가져오기"""
-    try:
-        response = requests.get(f"{API_URL}/exercises")
-        if response.status_code == 200:
-            return response.json().get("exercises", [])
-        return []
-    except Exception as e:
-        print(f"운동 목록 요청 오류: {str(e)}")
-        return []
+    """FastAPI 서버에서 운동 목록 가져오기"""
+    loop = get_event_loop()
+    return loop.run_until_complete(fetch_data(f"{API_URL}/exercises"))
 
-# 포즈 데이터 가져오기 함수
-def get_pose_data_from_queue(camera_ids):
-    """이미지 큐에서 포즈 데이터를 가져와 세션 상태에 저장"""
+# 웹소켓 연결 및 이미지 수신 함수
+async def connect_to_camera_stream(camera_id):
+    """WebSocket을 통해 카메라 스트림에 연결"""
+    global latest_images, latest_pose_data
+    
+    # 카메라 별 큐 초기화
+    if camera_id not in image_queues:
+        image_queues[camera_id] = queue.Queue(maxsize=10)
+    
+    # 연결 상태 초기화
+    if camera_id not in connection_status:
+        connection_status[camera_id] = "disconnected"
+    
+    # 연결 시도 횟수 초기화
+    if camera_id not in connection_attempts:
+        connection_attempts[camera_id] = 0
+    
+    # 이미 연결된 경우 리턴
+    if connection_status.get(camera_id) == "connecting":
+        return
+    
+    # 연결 상태 업데이트
+    update_connection_status(camera_id, "connecting")
+    
+    try:
+        session = await init_session()
+        # WebSocket URL 구성
+        ws_url = f"{API_URL.replace('http://', 'ws://')}/ws/stream/{camera_id}"
+        
+        # 향상된 WebSocket 옵션
+        heartbeat = 30.0  # 30초 핑/퐁
+        ws_timeout = aiohttp.ClientWSTimeout(ws_close=60.0)  # WebSocket 종료 대기 시간 60초
+        
+        async with session.ws_connect(
+            ws_url, 
+            heartbeat=heartbeat,
+            timeout=ws_timeout,
+            max_msg_size=0,  # 무제한
+            compress=False  # 웹소켓 압축 비활성화로 성능 향상
+        ) as ws:
+            # 연결 성공 - 상태 업데이트 및 시도 횟수 초기화
+            update_connection_status(camera_id, "connected")
+            connection_attempts[camera_id] = 0
+            
+            last_ping_time = time.time()
+            ping_interval = 25
+            
+            while is_running:
+                # 핑 전송 (주기적으로) - 서버 핑/퐁 메커니즘과 별개로 유지
+                current_time = time.time()
+                if current_time - last_ping_time >= ping_interval:
+                    try:
+                        await ws.ping()
+                        last_ping_time = current_time
+                    except:
+                        # 핑 실패 시 루프 탈출하여 재연결
+                        break
+                
+                # 데이터 수신 (짧은 타임아웃으로 반응성 유지)
+                try:
+                    msg = await asyncio.wait_for(ws.receive(), timeout=0.1)
+                    
+                    if msg.type == aiohttp.WSMsgType.CLOSED:
+                        break
+                    elif msg.type == aiohttp.WSMsgType.ERROR:
+                        break
+                    elif msg.type == aiohttp.WSMsgType.TEXT:
+                        try:
+                            data = json.loads(msg.data)
+                            
+                            if data.get("type") in ["image", "image_with_pose"]:
+                                image_data = data.get("image_data")
+                                timestamp = data.get("timestamp")
+                                pose_data = data.get("pose_data")
+                                
+                                # 이미지를 큐에 추가하고 메타데이터 저장
+                                if image_data:
+                                    # 최신 이미지 저장
+                                    latest_images[camera_id] = {
+                                        "image_data": image_data,
+                                        "timestamp": timestamp
+                                    }
+                                    
+                                    # 포즈 데이터가 있으면 저장
+                                    if pose_data:
+                                        latest_pose_data[camera_id] = pose_data
+                                    
+                                    # 큐에 데이터 추가 (가득 차면 가장 오래된 항목 삭제)
+                                    try:
+                                        # 큐가 가득 찼으면 이전 항목 제거
+                                        if image_queues[camera_id].full():
+                                            image_queues[camera_id].get_nowait()
+                                        
+                                        # 새 이미지 큐에 추가
+                                        image_queues[camera_id].put_nowait({
+                                            "image_data": image_data,
+                                            "timestamp": timestamp,
+                                            "pose_data": pose_data if pose_data else None
+                                        })
+                                    except queue.Full:
+                                        pass  # 큐가 꽉 찬 경우 무시
+                        except json.JSONDecodeError:
+                            pass
+                            
+                except asyncio.TimeoutError:
+                    # 타임아웃은 정상, 계속 진행
+                    pass
+                
+    except Exception as e:
+        st.error(f"카메라 {camera_id} 연결 오류: {str(e)}")
+    finally:
+        update_connection_status(camera_id, "disconnected")
+
+# 웹소켓 연결 관리 스레드 함수
+def camera_stream_thread(camera_id):
+    """비동기 이벤트 루프를 실행하는 스레드 함수"""
+    loop = get_event_loop()
+    
+    try:
+        # 비동기 연결 함수 실행
+        loop.run_until_complete(connect_to_camera_stream(camera_id))
+    except Exception as e:
+        st.error(f"카메라 스트림 스레드 오류: {str(e)}")
+    finally:
+        # 세션 닫기
+        try:
+            loop.run_until_complete(close_session())
+        except:
+            pass
+
+# 스트리밍 시작 함수
+def start_streaming():
+    """모든 카메라에 대한 스트리밍 시작"""
+    global is_running
+    is_running = True
+    
+    # 카메라별 이미지 큐 초기화
     for camera_id in camera_ids:
-        if camera_id in image_queues and not image_queues[camera_id].empty():
+        if camera_id not in image_queues:
+            image_queues[camera_id] = queue.Queue(maxsize=10)
+    
+    # 각 카메라별 스트리밍 스레드 시작
+    for camera_id in camera_ids:
+        thread_pool.submit(camera_stream_thread, camera_id)
+
+# 스트리밍 중지 함수
+def stop_streaming():
+    """모든 카메라 스트리밍 중지"""
+    global is_running
+    is_running = False
+    
+    # 큐 정리
+    for camera_id in camera_ids:
+        if camera_id in image_queues:
             try:
-                img_data = image_queues[camera_id].get(block=False)
-                # 포즈 데이터 저장
-                if "pose_data" in img_data:
-                    st.session_state.pose_data[camera_id] = img_data["pose_data"]
-            except queue.Empty:
+                while not image_queues[camera_id].empty():
+                    image_queues[camera_id].get_nowait()
+            except:
                 pass
 
-# 카메라 UI 업데이트 루프
-def update_camera_loop(image_slots, status_slots, connection_indicators, use_sync, pose_data_slots=None):
+# 이미지 디코딩 및 표시 함수
+def display_image(image_data, key, width=None):
+    """Base64 인코딩된 이미지 데이터를 디코딩하여 표시"""
     try:
-        update_interval = 0
-        while True:
-            update_interval += 1
-            update_ui = False
+        if image_data:
+            image_bytes = base64.b64decode(image_data)
+            image = Image.open(io.BytesIO(image_bytes))
             
-            # 포즈 데이터 가져오기
-            get_pose_data_from_queue(st.session_state.selected_cameras)
-            
-            if use_sync and len(st.session_state.selected_cameras) > 1:
-                # 동기화된 프레임 찾기
-                sync_frames = find_synchronized_frames()
-                if sync_frames:
-                    # 동기화된 프레임이 있으면 UI 업데이트
-                    for camera_id, frame_data in sync_frames.items():
-                        st.session_state.camera_images[camera_id] = frame_data["image"]
-                        st.session_state.image_update_time[camera_id] = frame_data["time"]
-                        # 포즈 데이터가 있으면 저장
-                        if "pose_data" in frame_data:
-                            st.session_state.pose_data[camera_id] = frame_data["pose_data"]
-                    update_ui = True
+            if width:
+                st.image(image, width=width, key=key)
             else:
-                # 동기화 없이 각 카메라의 최신 프레임 사용
-                for camera_id in st.session_state.selected_cameras[:2]:
-                    if camera_id in image_queues and not image_queues[camera_id].empty():
-                        try:
-                            img_data = image_queues[camera_id].get(block=False)
-                            st.session_state.camera_images[camera_id] = img_data.get("image")
-                            st.session_state.image_update_time[camera_id] = img_data.get("time")
-                            # 포즈 데이터가 있으면 저장
-                            if "pose_data" in img_data:
-                                st.session_state.pose_data[camera_id] = img_data["pose_data"]
-                            update_ui = True
-                        except queue.Empty:
-                            pass
-            
-            # 이미지 업데이트
-            if update_ui:
-                for camera_id in st.session_state.selected_cameras[:2]:
-                    if camera_id in st.session_state.camera_images:
-                        img = st.session_state.camera_images[camera_id]
-                        if img is not None:
-                            image_slots[camera_id].image(img, use_container_width=True)
-                            status_time = st.session_state.image_update_time[camera_id].strftime('%H:%M:%S.%f')[:-3]
-                            status_slots[camera_id].text(f"업데이트: {status_time}")
-            
-            # 포즈 데이터 슬롯 업데이트
-            if pose_data_slots:
-                for camera_id in st.session_state.selected_cameras[:2]:
-                    if camera_id in st.session_state.pose_data and st.session_state.pose_data[camera_id]:
-                        # 슬롯에 포즈 데이터 표시
-                        with pose_data_slots[camera_id].container():
-                            with st.expander(f"카메라 {camera_id} 포즈 데이터", expanded=True):
-                                st.json(st.session_state.pose_data[camera_id])
-                    else:
-                        # 데이터가 없을 경우 메시지 표시
-                        pose_data_slots[camera_id].info(f"카메라 {camera_id}의 포즈 데이터가 없습니다.")
-            
-            # UI 업데이트 간격 (더 빠른 응답성)
-            time.sleep(0.05)
+                st.image(image, key=key)
+            return True
     except Exception as e:
-        # 오류 표시 개선
-        st.error(f"오류가 발생했습니다. 페이지를 새로 고침해주세요.")
+        st.error(f"이미지 디코딩 오류: {str(e)}")
+    return False
 
-# 메인 화면 UI - 운동 선택 화면
+# 카메라 상태 제어 함수
+def control_camera_status(camera_id, status):
+    """카메라 상태 제어 API 호출"""
+    loop = get_event_loop()
+    result = loop.run_until_complete(
+        fetch_data(
+            f"{API_URL}/cameras/{camera_id}/status",
+            method="POST",
+            data={"status": status}
+        )
+    )
+    return result
+
+# 페이지 관리 함수
+def set_page(page_name, **kwargs):
+    """페이지 상태 설정 및 저장"""
+    st.session_state.page = page_name
+    # 추가 인자가 있으면 세션 상태에 저장
+    for key, value in kwargs.items():
+        st.session_state[key] = value
+
+# 메인 페이지 (운동 선택)
 def main_page():
-    st.title("KOMI 운동 가이드")
+    """메인 페이지 - 운동 선택 화면"""
+    st.title("KOMI 운동 보조 시스템")
     
-    # 처음 로드 시 운동 목록 가져오기
-    if not st.session_state.exercises:
-        with st.spinner("운동 목록을 가져오는 중..."):
-            st.session_state.exercises = get_exercises()
+    # 운동 목록 가져오기
+    exercise_data = get_exercises()
     
-    # 운동 목록이 없으면 표시 후 종료
-    if not st.session_state.exercises:
-        st.info("서버에서 운동 정보를 가져올 수 없습니다.")
-        if st.button("새로고침"):
-            st.session_state.exercises = get_exercises()
-            st.rerun()
+    if not exercise_data or "exercises" not in exercise_data:
+        st.error("운동 데이터를 가져오는데 실패했습니다.")
         return
     
-    # 운동 선택 칸 표시
-    st.subheader("원하는 운동을 선택하세요")
+    # 운동 선택 화면 구성
+    st.subheader("운동을 선택하세요")
     
-    # 운동 선택 레이아웃
-    cols = st.columns(len(st.session_state.exercises))
+    # 그리드 레이아웃 시작
+    cols = st.columns(3)
     
-    for i, exercise in enumerate(st.session_state.exercises):
-        with cols[i]:
-            st.write(f"### {exercise['name']}")
-            st.write(exercise['description'])
-            if st.button(f"{exercise['name']} 선택", key=f"ex_{exercise['id']}"):
-                st.session_state.selected_exercise = exercise
-                st.session_state.page = "exercise_guide"
-                st.rerun()
+    # 각 운동을 카드 형태로 표시
+    for i, exercise in enumerate(exercise_data["exercises"]):
+        with cols[i % 3]:
+            st.subheader(exercise["name"])
+            st.text(exercise["description"])
+            
+            # 버튼 클릭 시 운동 가이드 페이지로 이동
+            if st.button(f"{exercise['name']} 선택", key=f"select_{exercise['id']}"):
+                set_page("exercise_guide", exercise_id=exercise["id"])
 
-# 운동 가이드 화면
+# 운동 가이드 페이지
 def exercise_guide():
-    exercise = st.session_state.selected_exercise
+    """운동 가이드 페이지 - 선택한 운동의 가이드 영상 표시"""
+    # 선택된 운동 ID 확인
+    if "exercise_id" not in st.session_state:
+        st.error("선택된 운동이 없습니다.")
+        if st.button("운동 선택으로 돌아가기"):
+            set_page("main_page")
+        return
     
+    exercise_id = st.session_state.exercise_id
+    
+    # 운동 상세 정보 가져오기
+    loop = get_event_loop()
+    exercise = loop.run_until_complete(fetch_data(f"{API_URL}/exercise/{exercise_id}"))
+    
+    if not exercise:
+        st.error("운동 정보를 가져오는데 실패했습니다.")
+        if st.button("운동 선택으로 돌아가기"):
+            set_page("main_page")
+        return
+    
+    # 헤더 표시
     st.title(f"{exercise['name']} 가이드")
-    st.write(exercise['description'])
-    
-    # 뒤로가기 버튼
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col1:
-        if st.button("← 뒤로가기"):
-            st.session_state.page = "main"
-            st.rerun()
-    
-    # 운동하기 버튼
-    with col3:
-        if st.button("운동하기 →"):
-            st.session_state.page = "exercise_webcam"
-            st.rerun()
+    st.text(exercise["description"])
     
     # 가이드 영상 표시
-    st.subheader("가이드 영상")
+    if "guide_videos" in exercise:
+        st.subheader("가이드 영상")
+        
+        # 2열 레이아웃
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**전면 영상**")
+            if "front" in exercise["guide_videos"]:
+                front_video = exercise["guide_videos"]["front"]
+                st.video(f"{API_URL}/data{front_video}")
+        
+        with col2:
+            st.markdown("**측면 영상**")
+            if "side" in exercise["guide_videos"]:
+                side_video = exercise["guide_videos"]["side"]
+                st.video(f"{API_URL}/data{side_video}")
     
-    # 영상 표시 레이아웃
+    # 네비게이션 버튼
     col1, col2 = st.columns(2)
-    
-    # 전면 영상
     with col1:
-        st.write("#### 전면 가이드")
-        front_video_path = f"{API_URL}/data{exercise['guide_videos']['front']}"
-        st.video(front_video_path, loop=True, start_time=0, autoplay=True)
-    
-    # 측면 영상
+        if st.button("운동 선택으로 돌아가기"):
+            set_page("main_page")
     with col2:
-        st.write("#### 측면 가이드")
-        side_video_path = f"{API_URL}/data{exercise['guide_videos']['side']}"
-        st.video(side_video_path, loop=True, start_time=0, autoplay=True)
+        if st.button("운동 시작하기"):
+            set_page("exercise_webcam", exercise_id=exercise_id)
 
-
+# 웹캠 모니터링 페이지
 def exercise_webcam():
-    global selected_cameras, is_running, server_time_offset, last_time_sync
+    """웹캠 모니터링 페이지 - 실시간 웹캠 피드백"""
+    # 선택된 운동 ID 확인
+    if "exercise_id" not in st.session_state:
+        st.error("선택된 운동이 없습니다.")
+        if st.button("운동 선택으로 돌아가기"):
+            set_page("main_page")
+        return
     
-    exercise = st.session_state.selected_exercise
+    exercise_id = st.session_state.exercise_id
     
-    st.title(f"{exercise['name']} 운동 모니터링")
+    # 운동 상세 정보 가져오기
+    loop = get_event_loop()
+    exercise = loop.run_until_complete(fetch_data(f"{API_URL}/exercise/{exercise_id}"))
+    
+    if not exercise:
+        st.error("운동 정보를 가져오는데 실패했습니다.")
+        if st.button("운동 선택으로 돌아가기"):
+            set_page("main_page")
+        return
+    
+    # 헤더 표시
+    st.title(f"{exercise['name']} 실시간 분석")
     
     # 뒤로가기 버튼
-    if st.button("← 가이드로 돌아가기"):
-        st.session_state.page = "exercise_guide"
-        st.rerun()
+    if st.button("가이드로 돌아가기"):
+        stop_streaming()
+        set_page("exercise_guide", exercise_id=exercise_id)
     
-    # 서버 상태 확인
-    if st.session_state.server_status is None:
-        with st.spinner("서버 연결 중..."):
-            st.session_state.cameras = get_cameras()
-    
-    # 서버 상태에 따른 처리
-    if st.session_state.server_status == "연결 실패":
-        st.error("서버에 연결할 수 없습니다")
-        if st.button("재연결"):
-            st.session_state.cameras = get_cameras()
-            st.rerun()
-        return
-    
-    # 카메라 목록이 없으면 표시 후 종료
-    if not st.session_state.cameras:
-        st.info("연결된 카메라가 없습니다")
-        if st.button("새로고침"):
-            st.session_state.cameras = get_cameras()
-            st.rerun()
-        return
-    
-    # 카메라 자동 선택 (사용자 선택 UI 제거)
-    if st.session_state.cameras:
-        # 카메라가 1대인 경우 해당 카메라만 선택
-        # 카메라가 2대 이상인 경우 처음 2대 선택
-        auto_selected = st.session_state.cameras[:min(2, len(st.session_state.cameras))]
+    # 스트리밍 시작 (처음 페이지 로드 시)
+    if "streaming_started" not in st.session_state:
+        start_streaming()
+        st.session_state.streaming_started = True
         
-        if auto_selected != st.session_state.selected_cameras:
-            st.session_state.selected_cameras = auto_selected
-            selected_cameras = auto_selected
-            # 카메라 선택 변경 시 동기화 버퍼 초기화
-            init_sync_buffer(auto_selected)
+        # 카메라 상태 초기화
+        for camera_id in camera_ids:
+            # 카메라 상태를 'on'으로 설정
+            control_camera_status(camera_id, "on")
     
-    # 동기화 설정
-    col1, col2 = st.columns([3, 1])
+    # 카메라 컨트롤
+    st.subheader("카메라 제어")
+    col1, col2 = st.columns(2)
+    
     with col1:
-        # 비어있는 텍스트 표시 (동기화 상태 준비 중 메시지 제거)
-        st.caption("")
+        # 전면 카메라 상태 표시 및 제어
+        front_status = connection_status.get("front", "disconnected")
+        st.markdown(f"**전면 카메라**: {front_status}")
+        
+        # 상태에 따른 버튼 표시
+        if front_status == "connected":
+            if st.button("포즈 감지 시작", key="front_detect"):
+                control_camera_status("front", "detect")
+            if st.button("일반 모드로 전환", key="front_normal"):
+                control_camera_status("front", "on")
+    
     with col2:
-        # 체크박스 제거하고 동기화는 항상 활성화
-        use_sync = True
-    
-    # 카메라 슬롯 설정
-    if st.session_state.selected_cameras:
-        # 카메라 레이아웃 설정
-        col1, col2 = st.columns(2)
-        image_slots = {}
-        status_slots = {}
-        connection_indicators = {}
+        # 측면 카메라 상태 표시 및 제어
+        side_status = connection_status.get("side", "disconnected")
+        st.markdown(f"**측면 카메라**: {side_status}")
         
-        # 카메라 개수에 따라 다르게 표시
-        camera_count = len(st.session_state.selected_cameras)
-        view_types = ["전면 카메라", "측면 카메라"]
-        columns = [col1, col2]
-        
-        # 표시할 카메라 결정 (1대 또는 최대 2대)
-        cameras_to_display = st.session_state.selected_cameras[:min(2, camera_count)]
-        
-        # 카메라가 1대인 경우 첫 번째 컬럼만 사용
-        display_columns = [columns[0]] if camera_count == 1 else columns
-        
-        # 각 카메라에 대한 UI 요소 생성
-        for i, camera_id in enumerate(cameras_to_display):
-            with display_columns[i]:
-                # 카메라가 1대인 경우 항상 "정면" 표시, 그렇지 않으면 해당 위치 표시
-                view_label = view_types[i]
-                st.write(f"#### {view_label}")
-                
-                # UI 요소 생성
-                connection_indicators[camera_id] = st.empty()
-                image_slots[camera_id] = st.empty()
-                status_slots[camera_id] = st.empty()
-                status_slots[camera_id].text("실시간 스트리밍 준비 중...")
+        # 상태에 따른 버튼 표시
+        if side_status == "connected":
+            if st.button("포즈 감지 시작", key="side_detect"):
+                control_camera_status("side", "detect")
+            if st.button("일반 모드로 전환", key="side_normal"):
+                control_camera_status("side", "on")
     
-    # 포즈 데이터 디버그 정보 표시 슬롯
-    st.subheader("포즈 감지 데이터 (디버그)")
-    pose_data_slots = {}
-    for i, camera_id in enumerate(st.session_state.selected_cameras[:2]):
-        pose_data_slots[camera_id] = st.empty()
+    # 이미지 스트리밍 영역
+    st.subheader("실시간 영상")
     
-    # 별도 스레드 시작 (단 한번만)
-    if 'thread_started' not in st.session_state:
-        thread = threading.Thread(
-            target=run_async_loop,
-            args=(
-                API_URL, selected_cameras, is_running, sync_buffer, server_time_offset,
-                last_time_sync, TIME_SYNC_INTERVAL, process_image_in_thread, thread_pool
-            ),
-            daemon=True
-        )
-        thread.start()
-        st.session_state.thread_started = True
+    # 이미지 슬롯 생성 (10fps * 2 카메라)
+    cam_cols = st.columns(2)
     
-    # UI 업데이트 루프 수정 - 포즈 데이터 슬롯 전달
-    update_camera_loop(image_slots, status_slots, connection_indicators, use_sync, pose_data_slots)
+    # 각 카메라별 이미지 슬롯을 미리 생성해두기
+    with cam_cols[0]:
+        st.markdown("**전면 카메라**")
+        front_image_slot = st.empty()
+    
+    with cam_cols[1]:
+        st.markdown("**측면 카메라**")
+        side_image_slot = st.empty()
+    
+    # 포즈 데이터 디버그 영역
+    st.subheader("포즈 데이터 (디버그)")
+    debug_slots = {}
+    for camera_id in camera_ids:
+        debug_slots[camera_id] = st.empty()
+    
+    # Streamlit 이미지 업데이트 함수
+    def update_streamlit_images():
+        """이미지 슬롯에 최신 이미지 표시"""
+        # 전면 카메라 이미지 표시
+        if "front" in latest_images and latest_images["front"].get("image_data"):
+            img_data = latest_images["front"]["image_data"]
+            image_bytes = base64.b64decode(img_data)
+            image = Image.open(io.BytesIO(image_bytes))
+            front_image_slot.image(image, use_column_width=True)
+        
+        # 측면 카메라 이미지 표시
+        if "side" in latest_images and latest_images["side"].get("image_data"):
+            img_data = latest_images["side"]["image_data"]
+            image_bytes = base64.b64decode(img_data)
+            image = Image.open(io.BytesIO(image_bytes))
+            side_image_slot.image(image, use_column_width=True)
+        
+        # 포즈 데이터 디버그 정보 표시
+        for camera_id in camera_ids:
+            if camera_id in latest_pose_data:
+                debug_slots[camera_id].json(latest_pose_data[camera_id])
+    
+    # 페이지 초기화 시 이미지 업데이트 스레드 시작
+    if "update_thread_started" not in st.session_state:
+        st.session_state.update_thread_started = True
+        
+        # Streamlit의 experimental_rerun 대신 주기적으로 업데이트 실행
+        # 이 예제에서는 update_streamlit_images()를 호출하기 위해 
+        # 버튼을 숨겨두고 JavaScript로 주기적으로 클릭
+        st.markdown("""
+        <script>
+            function clickUpdateButton() {
+                const btn = document.getElementById('update_images_btn');
+                if (btn) {
+                    btn.click();
+                }
+                setTimeout(clickUpdateButton, 100); // 10fps = 100ms
+            }
+            setTimeout(clickUpdateButton, 500); // 페이지 로드 후 0.5초 뒤 시작
+        </script>
+        """, unsafe_allow_html=True)
+        
+        # JavaScript에서 클릭할 숨겨진 버튼
+        if st.button("Update Images", key="update_images_btn", help="JavaScript에서 자동으로 호출됨"):
+            update_streamlit_images()
 
-
-# 카메라 테스트 UI
-def camera_test():
-    global selected_cameras, is_running, server_time_offset, last_time_sync
-    
-    st.title("KOMI 웹캠 모니터링")
-    
-    # 서버 상태 확인
-    if st.session_state.server_status is None:
-        with st.spinner("서버 연결 중..."):
-            st.session_state.cameras = get_cameras()
-    
-    # 서버 상태에 따른 처리
-    if st.session_state.server_status == "연결 실패":
-        st.error("서버에 연결할 수 없습니다")
-        if st.button("재연결"):
-            st.session_state.cameras = get_cameras()
-            st.rerun()
-        return
-    
-    # 카메라 목록이 없으면 표시 후 종료
-    if not st.session_state.cameras:
-        st.info("연결된 카메라가 없습니다")
-        if st.button("새로고침"):
-            st.session_state.cameras = get_cameras()
-            st.rerun()
-        return
-    
-    # 카메라 다중 선택기
-    if st.session_state.cameras:
-        # 기본값 설정 (이전에 선택된 카메라 유지)
-        default_cameras = st.session_state.selected_cameras if st.session_state.selected_cameras else st.session_state.cameras[:min(2, len(st.session_state.cameras))]
-        
-        selected = st.multiselect(
-            "모니터링할 카메라 선택 (최대 2대)",
-            st.session_state.cameras,
-            default=default_cameras,
-            max_selections=2
-        )
-        
-        if selected != st.session_state.selected_cameras:
-            st.session_state.selected_cameras = selected
-            selected_cameras = selected
-            # 카메라 선택 변경 시 동기화 버퍼 초기화
-            init_sync_buffer(selected)
-    
-    # 동기화 설정
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        # 비어있는 텍스트 표시 (동기화 상태 준비 중 메시지 제거)
-        st.caption("")
-    with col2:
-        # 체크박스 제거하고 동기화는 항상 활성화
-        use_sync = True
-    
-    # 두 개의 열로 이미지 배치
-    if st.session_state.selected_cameras:
-        cols = st.columns(min(2, len(st.session_state.selected_cameras)))
-        image_slots = {}
-        status_slots = {}
-        connection_indicators = {}
-        
-        # 각 카메라별 이미지 슬롯 생성
-        for i, camera_id in enumerate(st.session_state.selected_cameras[:2]):
-            with cols[i]:
-                header_col1, header_col2 = st.columns([4, 1])
-                with header_col1:
-                    st.subheader(f"카메라 {i+1}: {camera_id}")
-                with header_col2:
-                    # 연결 상태 표시
-                    connection_indicators[camera_id] = st.empty()
-                
-                image_slots[camera_id] = st.empty()
-                status_slots[camera_id] = st.empty()
-                status_slots[camera_id].text("실시간 스트리밍 준비 중...")
-    
-    # 포즈 데이터 디버그 정보 표시 슬롯
-    st.subheader("포즈 감지 데이터 (디버그)")
-    pose_data_slots = {}
-    for i, camera_id in enumerate(st.session_state.selected_cameras[:2]):
-        pose_data_slots[camera_id] = st.empty()
-    
-    # 별도 스레드 시작 (단 한번만)
-    if 'thread_started' not in st.session_state:
-        thread = threading.Thread(
-            target=run_async_loop,
-            args=(
-                API_URL, selected_cameras, is_running, sync_buffer, server_time_offset,
-                last_time_sync, TIME_SYNC_INTERVAL, process_image_in_thread, thread_pool
-            ),
-            daemon=True
-        )
-        thread.start()
-        st.session_state.thread_started = True
-    
-    # UI 업데이트 루프 실행 - 포즈 데이터 슬롯 전달
-    update_camera_loop(image_slots, status_slots, connection_indicators, use_sync, pose_data_slots)
-
-# 전체 앱 라우팅
+# 앱 시작점
 def main():
+    """애플리케이션 메인 함수"""
+    # 세션 상태 초기화
+    if "page" not in st.session_state:
+        st.session_state.page = "main_page"
+    
     # 페이지 라우팅
-    if st.session_state.page == "main":
+    if st.session_state.page == "main_page":
         main_page()
     elif st.session_state.page == "exercise_guide":
         exercise_guide()
     elif st.session_state.page == "exercise_webcam":
         exercise_webcam()
 
-# 애플리케이션 시작
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception:
-        st.error("앱 실행 오류가 발생했습니다. 페이지를 새로 고침해주세요.")
-    finally:
-        # 종료 플래그 설정
-        is_running = False
-        time.sleep(0.5)
-        
-        # 스레드 풀 종료
-        thread_pool.shutdown()
+    main() 
