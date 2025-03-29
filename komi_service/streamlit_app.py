@@ -309,15 +309,15 @@ def exercise_guide():
     
     # 전면 영상
     with col1:
-        st.write("#### 전면 영상")
+        st.write("#### 전면 가이드")
         front_video_path = f"{API_URL}/data{exercise['guide_videos']['front']}"
-        st.video(front_video_path)
+        st.video(front_video_path, loop=True, start_time=0, autoplay=True)
     
     # 측면 영상
     with col2:
-        st.write("#### 측면 영상")
+        st.write("#### 측면 가이드")
         side_video_path = f"{API_URL}/data{exercise['guide_videos']['side']}"
-        st.video(side_video_path)
+        st.video(side_video_path, loop=True, start_time=0, autoplay=True)
 
 
 def exercise_webcam():
@@ -376,28 +376,32 @@ def exercise_webcam():
     
     # 카메라 슬롯 설정
     if st.session_state.selected_cameras:
-        cols = st.columns(min(2, len(st.session_state.selected_cameras)))
+        # 카메라 레이아웃 설정
+        col1, col2 = st.columns(2)
         image_slots = {}
         status_slots = {}
         connection_indicators = {}
         
         # 카메라 개수에 따라 다르게 표시
         camera_count = len(st.session_state.selected_cameras)
-        view_types = ["정면", "측면"]
+        view_types = ["전면 카메라", "측면 카메라"]
+        columns = [col1, col2]
         
-        # 선택된 카메라 수에 따라 처리 (최대 2대)
-        for i, camera_id in enumerate(st.session_state.selected_cameras[:2]):
-            # 카메라가 1대인 경우 항상 정면, 2대인 경우 첫 번째는 정면, 두 번째는 측면
-            view_type = "정면" if (camera_count == 1 or i == 0) else "측면"
-            
-            with cols[i]:
-                header_col1, header_col2 = st.columns([4, 1])
-                with header_col1:
-                    # st.subheader(f"{view_type} 카메라: {camera_id}")
-                    st.subheader(view_type)
-                with header_col2:
-                    connection_indicators[camera_id] = st.empty()
+        # 표시할 카메라 결정 (1대 또는 최대 2대)
+        cameras_to_display = st.session_state.selected_cameras[:min(2, camera_count)]
+        
+        # 카메라가 1대인 경우 첫 번째 컬럼만 사용
+        display_columns = [columns[0]] if camera_count == 1 else columns
+        
+        # 각 카메라에 대한 UI 요소 생성
+        for i, camera_id in enumerate(cameras_to_display):
+            with display_columns[i]:
+                # 카메라가 1대인 경우 항상 "정면" 표시, 그렇지 않으면 해당 위치 표시
+                view_label = view_types[i]
+                st.write(f"#### {view_label}")
                 
+                # UI 요소 생성
+                connection_indicators[camera_id] = st.empty()
                 image_slots[camera_id] = st.empty()
                 status_slots[camera_id] = st.empty()
                 status_slots[camera_id].text("실시간 스트리밍 준비 중...")
