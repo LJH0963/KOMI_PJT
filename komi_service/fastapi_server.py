@@ -1,12 +1,25 @@
-from fastapi import FastAPI, WebSocket, HTTPException
+from fastapi import FastAPI, WebSocket, HTTPException, Body, UploadFile, File, Form, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 import asyncio
 import json
 import time
+import os
 from datetime import datetime
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Optional
 import threading
 from contextlib import asynccontextmanager
+import mimetypes
+
+# MIME 타입 등록
+mimetypes.add_type("video/mp4", ".mp4")
+
+# 영상 저장 경로 설정
+VIDEO_STORAGE_PATH = os.environ.get("VIDEO_STORAGE_PATH", "./video")
+
+# 데이터 디렉토리 설정
+DATA_DIRECTORY = os.environ.get("DATA_DIRECTORY", "./data")
 
 # 저장소: 카메라 ID -> 이미지 데이터
 latest_image_data: Dict[str, str] = {}
@@ -28,6 +41,39 @@ app_state = {
     "last_connection_cleanup": datetime.now()
 }
 
+# 운동 관련 데이터
+exercise_data = {
+    "exercises": [
+        {
+            "id": "squat",
+            "name": "스쿼트",
+            "description": "기본 하체 운동",
+            "guide_videos": {
+                "front": "/squat/front.mp4",
+                "side": "/squat/side.mp4"
+            }
+        },
+        {
+            "id": "pushup",
+            "name": "푸시업",
+            "description": "상체 근력 운동",
+            "guide_videos": {
+                "front": "/pushup/front.mp4",
+                "side": "/pushup/side.mp4"
+            }
+        },
+        {
+            "id": "lunge",
+            "name": "런지",
+            "description": "하체 균형 운동",
+            "guide_videos": {
+                "front": "/lunge/front.mp4",
+                "side": "/lunge/side.mp4"
+            }
+        }
+    ]
+}
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app_state["start_time"] = datetime.now()
@@ -45,6 +91,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 정적 파일 디렉토리 생성 (없는 경우)
+if not os.path.exists(DATA_DIRECTORY):
+    os.makedirs(DATA_DIRECTORY, exist_ok=True)
+
+# 비디오 저장 디렉토리 생성 (없는 경우)
+if not os.path.exists(VIDEO_STORAGE_PATH):
+    os.makedirs(VIDEO_STORAGE_PATH, exist_ok=True)
+    os.makedirs(os.path.join(VIDEO_STORAGE_PATH, "uploads"), exist_ok=True)
+
+# 정적 파일 서빙 설정
+app.mount("/data", StaticFiles(directory=DATA_DIRECTORY), name="data")
 
 # 헬스 체크 엔드포인트
 @app.get("/health")
@@ -80,6 +138,27 @@ async def get_cameras():
         ]
     
     return {"cameras": active_cameras, "count": len(active_cameras)}
+
+# 운동 관련 엔드포인트
+@app.get("/exercises")
+async def get_exercises():
+    """사용 가능한 운동 목록 조회"""
+    return {"exercises": exercise_data["exercises"]}
+
+@app.get("/exercise/{exercise_id}")
+async def get_exercise_detail(exercise_id: str):
+    """특정 운동의 상세 정보 조회"""
+    # 운동 ID로 운동 찾기
+    exercise = None
+    for exercise_item in exercise_data["exercises"]:
+        if exercise_item["id"] == exercise_id:
+            exercise = exercise_item
+            break
+    
+    if not exercise:
+        raise HTTPException(status_code=404, detail="운동을 찾을 수 없습니다")
+    
+    return exercise
 
 # 카메라 연결 해제 처리 함수
 async def disconnect_camera(camera_id: str):
@@ -505,6 +584,167 @@ async def stream_camera(websocket: WebSocket, camera_id: str):
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(cleanup_connections())
+
+# 카메라 상태 제어 엔드포인트
+@app.post("/cameras/{camera_id}/status")
+async def camera_status_control(
+    camera_id: str,
+    status: str = Body(..., embed=True)
+):
+    """카메라 상태 제어 (off, on, ready, record, detect)"""
+    valid_statuses = ["off", "on", "ready", "record", "detect"]
+    
+    if status not in valid_statuses:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"유효하지 않은 상태입니다. 유효한 상태: {', '.join(valid_statuses)}"
+        )
+    
+    with data_lock:
+        if camera_id not in camera_info:
+            raise HTTPException(status_code=404, detail="카메라를 찾을 수 없습니다")
+        
+        if "websocket" not in camera_info[camera_id]:
+            raise HTTPException(status_code=400, detail="카메라가 현재 연결되어 있지 않습니다")
+        
+        try:
+            # 카메라 클라이언트에 명령 전송
+            websocket = camera_info[camera_id]["websocket"]
+            await websocket.send_json({
+                "type": "status_control",
+                "status": status
+            })
+            
+            # 카메라 상태 업데이트
+            camera_info[camera_id]["status"] = status
+            
+            # 녹화 시작 시간 기록
+            if status == "record":
+                camera_info[camera_id]["recording_start_time"] = datetime.now().isoformat()
+            
+            return {
+                "status": "success",
+                "camera_id": camera_id,
+                "camera_status": status,
+                "message": f"카메라 상태가 '{status}'로 변경되었습니다"
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"카메라 제어 중 오류 발생: {str(e)}")
+
+# 카메라 상태 조회 엔드포인트
+@app.get("/cameras/{camera_id}/status")
+async def get_camera_status(camera_id: str):
+    """카메라 상태 조회"""
+    with data_lock:
+        if camera_id not in camera_info:
+            raise HTTPException(status_code=404, detail="카메라를 찾을 수 없습니다")
+        
+        # 기본 응답 정보
+        response = {
+            "camera_id": camera_id,
+            "connected": "websocket" in camera_info[camera_id],
+            "status": camera_info[camera_id].get("status", "off")
+        }
+        
+        # 녹화 중인 경우 추가 정보
+        if response["status"] == "record" and "recording_start_time" in camera_info[camera_id]:
+            start_time = camera_info[camera_id]["recording_start_time"]
+            response["recording"] = {
+                "start_time": start_time,
+                "duration_seconds": (datetime.now() - datetime.fromisoformat(start_time)).total_seconds()
+            }
+        
+        return response
+
+# --- 미디어 관리 및 분석 관련 엔드포인트 ---
+
+# 사용자 업로드 영상 스트리밍 엔드포인트
+@app.get("/uploaded_videos/{video_id}")
+async def get_uploaded_video(video_id: str):
+    """사용자가 업로드한 영상을 스트리밍하여 제공"""
+    video_path = os.path.join(VIDEO_STORAGE_PATH, "uploads", f"{video_id}.mp4")
+    
+    if not os.path.exists(video_path):
+        raise HTTPException(status_code=404, detail="업로드된 영상을 찾을 수 없습니다")
+    
+    return FileResponse(
+        video_path,
+        media_type="video/mp4",
+        filename=f"user_video_{video_id}.mp4"
+    )
+
+# 영상 업로드 엔드포인트
+@app.post("/videos/upload")
+async def upload_exercise_video(
+    video: UploadFile = File(...),
+    exercise_id: str = Form(...),
+    user_id: Optional[str] = Form(None)
+):
+    """운동 영상 업로드 및 분석 요청"""
+    # 업로드 디렉토리 생성
+    upload_dir = os.path.join(VIDEO_STORAGE_PATH, "uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+    
+    # 파일 ID 생성
+    video_id = f"{int(time.time())}_{exercise_id}"
+    file_path = os.path.join(upload_dir, f"{video_id}.mp4")
+    
+    # 파일 저장
+    try:
+        with open(file_path, "wb") as buffer:
+            contents = await video.read()
+            buffer.write(contents)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"파일 저장 중 오류 발생: {str(e)}")
+    
+    return {
+        "video_id": video_id,
+        "exercise_id": exercise_id,
+        "status": "uploaded",
+        "message": "영상이 업로드되었습니다. 분석이 진행 중입니다.",
+        "video_url": f"/uploaded_videos/{video_id}"
+    }
+
+# 자세 분석 엔드포인트
+@app.post("/analyze/pose")
+async def analyze_pose(
+    pose_data: dict = Body(...),
+    exercise_id: str = Form(...),
+    video_id: Optional[str] = Form(None)
+):
+    """사용자의 자세 데이터를 분석하여 결과 제공"""
+    # 실제로는 자세 분석 알고리즘을 통해 사용자 자세 평가
+    
+    analysis_result = {
+        "exercise_id": exercise_id,
+        "score": 85,  # 예시 점수
+        "feedback": ["무릎 각도가 너무 좁습니다", "등이 굽어있습니다"],
+        "comparison": {
+            "hip_angle": {"user": 80, "reference": 90, "diff": -10},
+            "knee_angle": {"user": 100, "reference": 110, "diff": -10}
+        }
+    }
+    
+    if video_id:
+        analysis_result["video_id"] = video_id
+    
+    return analysis_result
+
+# 분석 결과 조회 엔드포인트
+@app.get("/analysis/{analysis_id}")
+async def get_analysis_result(analysis_id: str):
+    """특정 분석 결과 조회"""
+    # 실제로는 DB에서 해당 분석 ID의 결과를 조회
+    
+    return {
+        "analysis_id": analysis_id,
+        "status": "completed",
+        "result": {
+            "score": 87,
+            "feedback": ["무릎 각도 개선됨", "등 자세 교정 필요"],
+            "detailed_analysis": "..."
+        }
+    }
 
 # 서버 실행 (직접 실행 시)
 if __name__ == "__main__":
