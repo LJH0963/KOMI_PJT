@@ -71,6 +71,11 @@ if 'sync_status' not in st.session_state:
     st.session_state.sync_status = "준비 중..."
 if 'connection_status' not in st.session_state:
     st.session_state.connection_status = {}
+# 페이지 관리를 위한 상태 변수
+if 'page' not in st.session_state:
+    st.session_state.page = "main_page"
+if 'exercise_id' not in st.session_state:
+    st.session_state.exercise_id = None
 
 # Base64 이미지 디코딩 함수
 def decode_image(base64_image):
@@ -515,76 +520,36 @@ async def connect_to_camera_stream(camera_id):
     return False
 
 # 메인 UI
-def main():
+def monitor_cameras(active_cameras):
+    """활성화된 카메라를 모니터링하는 함수"""
     global selected_cameras, is_running
     
-    st.title("KOMI 웹캠 모니터링")
-    # st.caption(f"서버 연결: {API_URL} (시간 오프셋: {server_time_offset:.3f}초)")
+    # 운동 정보 표시
+    if "exercise_id" in st.session_state and st.session_state.exercise_id:
+        exercise = get_exercise_detail(st.session_state.exercise_id)
+        if exercise:
+            st.title(f"{exercise['name']} 실시간 모니터링")
+            st.text(exercise["description"])
+    else:
+        st.title("카메라 스트리밍")
     
-    # 서버 상태 확인
-    if st.session_state.server_status is None:
-        with st.spinner("서버 연결 중..."):
-            st.session_state.cameras = get_cameras()
+    # 뒤로가기 버튼
+    if st.button("운동 가이드로 돌아가기"):
+        set_page("exercise_guide", exercise_id=st.session_state.exercise_id)
     
-    # 서버 상태에 따른 처리
-    if st.session_state.server_status == "연결 실패":
-        st.error("서버에 연결할 수 없습니다")
-        if st.button("재연결"):
-            st.session_state.cameras = get_cameras()
-            st.rerun()
-        return
+    # 활성화된 카메라 자동 선택 (최대 2대)
+    max_cameras = min(2, len(active_cameras))
+    selected = active_cameras[:max_cameras]
     
-    # 카메라 목록이 없으면 표시 후 종료
-    if not st.session_state.cameras:
-        st.info("연결된 카메라가 없습니다")
-        if st.button("새로고침"):
-            st.session_state.cameras = get_cameras()
-            st.rerun()
-        return
+    # 선택된 카메라 업데이트
+    if selected != st.session_state.selected_cameras:
+        st.session_state.selected_cameras = selected
+        selected_cameras = selected
+        # 카메라 선택 변경 시 동기화 버퍼 초기화
+        init_sync_buffer(selected)
     
-    # 상태가 'off'가 아닌 카메라만 필터링
-    active_cameras = []
-    if hasattr(st.session_state, 'camera_statuses'):
-        active_cameras = [
-            camera_id for camera_id in st.session_state.cameras
-            if st.session_state.camera_statuses.get(camera_id, "off") != "off"
-        ]
-    
-    # 활성화된 카메라가 없으면 메시지 표시
-    if not active_cameras:
-        st.warning("활성화된 카메라가 없습니다. 모든 카메라가 'off' 상태입니다.")
-        if st.button("새로고침"):
-            st.session_state.cameras = get_cameras()
-            st.rerun()
-        return
-    
-    # 카메라 다중 선택기 - 활성화된 카메라만 선택 가능
-    if active_cameras:
-        # 이전에 선택된 카메라 중 여전히 활성화된 것만 기본값으로 설정
-        valid_selected = [cam for cam in st.session_state.selected_cameras if cam in active_cameras]
-        default_cameras = valid_selected if valid_selected else active_cameras[:min(2, len(active_cameras))]
-        
-        selected = st.multiselect(
-            "모니터링할 카메라 선택 (최대 2대)",
-            active_cameras,
-            default=default_cameras,
-            max_selections=2
-        )
-        
-        if selected != st.session_state.selected_cameras:
-            st.session_state.selected_cameras = selected
-            selected_cameras = selected
-            # 카메라 선택 변경 시 동기화 버퍼 초기화
-            init_sync_buffer(selected)
-    
-    # 동기화 설정
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        # 비어있는 텍스트 표시 (동기화 상태 준비 중 메시지 제거)
-        st.caption("")
-    with col2:
-        # 체크박스 제거하고 동기화는 항상 활성화
-        use_sync = True
+    # 동기화는 항상 활성화
+    use_sync = True
     
     # 두 개의 열로 이미지 배치
     if st.session_state.selected_cameras:
@@ -656,7 +621,209 @@ def main():
     except Exception as e:
         # 오류 표시 개선
         st.error(f"오류가 발생했습니다. 페이지를 새로 고침해주세요.")
+
+# 페이지 관리 함수
+def set_page(page_name, **kwargs):
+    """페이지 상태 설정 및 저장"""
+    # 이전 페이지와 다른 경우에만 변경
+    if st.session_state.page != page_name or kwargs:
+        st.session_state.page = page_name
+        # 추가 인자가 있으면 세션 상태에 저장
+        for key, value in kwargs.items():
+            st.session_state[key] = value
+        # 상태 변경 후 즉시 페이지 리로드
+        st.rerun()
+
+# 운동 목록 가져오기
+async def async_get_exercises():
+    """비동기적으로 운동 목록 가져오기"""
+    try:
+        session = await init_session()
+        request_timeout = aiohttp.ClientTimeout(total=2)
+        async with session.get(f"{API_URL}/exercises", timeout=request_timeout) as response:
+            if response.status == 200:
+                return await response.json()
+            return {"exercises": []}
+    except Exception as e:
+        print(f"운동 목록 요청 오류: {str(e)}")
+        return {"exercises": []}
+
+# 운동 상세 정보 가져오기
+async def async_get_exercise_detail(exercise_id):
+    """비동기적으로 운동 상세 정보 가져오기"""
+    try:
+        session = await init_session()
+        request_timeout = aiohttp.ClientTimeout(total=2)
+        async with session.get(f"{API_URL}/exercise/{exercise_id}", timeout=request_timeout) as response:
+            if response.status == 200:
+                return await response.json()
+            return None
+    except Exception as e:
+        print(f"운동 상세정보 요청 오류: {str(e)}")
+        return None
+
+# 운동 목록 가져오기 (동기 래퍼)
+def get_exercises():
+    """운동 목록 가져오기 (동기 래퍼)"""
+    return run_async(async_get_exercises())
+
+# 운동 상세 정보 가져오기 (동기 래퍼)
+def get_exercise_detail(exercise_id):
+    """운동 상세 정보 가져오기 (동기 래퍼)"""
+    return run_async(async_get_exercise_detail(exercise_id))
+
+# 운동 가이드 페이지
+def exercise_guide():
+    """운동 가이드 페이지 - 선택한 운동의 가이드 영상 표시"""
+    # 선택된 운동 ID 확인
+    if "exercise_id" not in st.session_state:
+        st.error("선택된 운동이 없습니다.")
+        if st.button("운동 선택으로 돌아가기"):
+            set_page("main_page")
+        return
     
+    exercise_id = st.session_state.exercise_id
+    
+    # 운동 상세 정보 가져오기
+    exercise = get_exercise_detail(exercise_id)
+    
+    if not exercise:
+        st.error("운동 정보를 가져오는데 실패했습니다.")
+        if st.button("운동 선택으로 돌아가기"):
+            set_page("main_page")
+        return
+    
+    # 헤더 표시
+    st.title(f"{exercise['name']} 가이드")
+    st.text(exercise["description"])
+    
+    # 가이드 영상 표시
+    if "guide_videos" in exercise:
+        st.subheader("가이드 영상")
+        
+        # 2열 레이아웃
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("전면 영상")
+            if "front" in exercise["guide_videos"]:
+                try:
+                    front_video = exercise["guide_videos"]["front"]
+                    video_url = f"{API_URL}/data{front_video}"
+                    # st.video 사용하여 자동 반복 재생 설정
+                    st.video(video_url, start_time=0, autoplay=True, loop=True)
+                except Exception as e:
+                    st.error(f"전면 영상을 불러올 수 없습니다: {str(e)}")
+            else:
+                st.info("전면 영상이 없습니다.")
+        
+        with col2:
+            st.subheader("측면 영상")
+            if "side" in exercise["guide_videos"]:
+                try:
+                    side_video = exercise["guide_videos"]["side"]
+                    video_url = f"{API_URL}/data{side_video}"
+                    # st.video 사용하여 자동 반복 재생 설정
+                    st.video(video_url, start_time=0, autoplay=True, loop=True)
+                except Exception as e:
+                    st.error(f"측면 영상을 불러올 수 없습니다: {str(e)}")
+            else:
+                st.info("측면 영상이 없습니다.")
+    else:
+        st.info("이 운동에는 가이드 영상이 없습니다.")
+    
+    # 네비게이션 버튼
+    # st.markdown("---")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("운동 선택으로 돌아가기"):
+            set_page("main_page")
+    with col2:
+        if st.button("운동 시작하기"):
+            set_page("monitor_page", exercise_id=exercise_id)
+
+# 운동 선택 페이지
+def main_page():
+    """메인 페이지 - 운동 선택 화면"""
+    st.title("KOMI 운동 보조 시스템")
+    
+    # 운동 목록 가져오기
+    exercise_data = get_exercises()
+    
+    if not exercise_data or "exercises" not in exercise_data:
+        st.error("운동 데이터를 가져오는데 실패했습니다.")
+        if st.button("새로고침"):
+            # 직접 페이지 리로드
+            st.rerun()
+        return
+    
+    # 운동 선택 화면 구성
+    st.subheader("운동을 선택하세요")
+    
+    # 그리드 레이아웃 시작
+    cols = st.columns(3)
+    
+    # 각 운동을 카드 형태로 표시
+    for i, exercise in enumerate(exercise_data["exercises"]):
+        with cols[i % 3]:
+            st.subheader(exercise["name"])
+            st.text(exercise["description"])
+            
+            # 버튼 클릭 시 운동 가이드 페이지로 이동
+            if st.button(f"{exercise['name']} 선택", key=f"select_{exercise['id']}"):
+                set_page("exercise_guide", exercise_id=exercise["id"])
+                
+                
+def main():
+    global selected_cameras, is_running
+    
+    # 서버 상태 확인
+    if st.session_state.server_status is None:
+        with st.spinner("서버 연결 중..."):
+            st.session_state.cameras = get_cameras()
+    
+    # 서버 상태에 따른 처리
+    if st.session_state.server_status == "연결 실패":
+        st.error("서버에 연결할 수 없습니다")
+        if st.button("재연결"):
+            st.session_state.cameras = get_cameras()
+            st.rerun()
+        return
+    
+    # 페이지 라우팅
+    if st.session_state.page == "main_page":
+        main_page()
+    elif st.session_state.page == "exercise_guide":
+        exercise_guide()
+    elif st.session_state.page == "monitor_page":
+        # 카메라 목록이 없으면 표시 후 종료
+        if not st.session_state.cameras:
+            st.info("연결된 카메라가 없습니다")
+            if st.button("새로고침"):
+                st.session_state.cameras = get_cameras()
+                st.rerun()
+            return
+        
+        # 상태가 'off'가 아닌 카메라만 필터링
+        active_cameras = []
+        if hasattr(st.session_state, 'camera_statuses'):
+            active_cameras = [
+                camera_id for camera_id in st.session_state.cameras
+                if st.session_state.camera_statuses.get(camera_id, "off") != "off"
+            ]
+        
+        # 활성화된 카메라가 없으면 메시지 표시
+        if not active_cameras:
+            st.warning("활성화된 카메라가 없습니다. 모든 카메라가 'off' 상태입니다.")
+            if st.button("새로고침"):
+                st.session_state.cameras = get_cameras()
+                st.rerun()
+            return
+        
+        # 활성화된 카메라가 있으면 모니터링 함수 호출
+        monitor_cameras(active_cameras)
+        
+        
 # 애플리케이션 시작
 if __name__ == "__main__":
     try:
@@ -669,4 +836,4 @@ if __name__ == "__main__":
         time.sleep(0.5)
         
         # 스레드 풀 종료
-        thread_pool.shutdown() 
+        thread_pool.shutdown()
