@@ -343,13 +343,11 @@ async def handle_server_messages(camera_id, ws):
                                     # 녹화 중 상태에서 다른 상태로 변경 시 녹화 종료
                                     if old_status == CAMERA_STATUS_RECORD and new_status != CAMERA_STATUS_RECORD:
                                         video_path, duration = stop_video_recording(camera_id)
-                                        # 서버에 녹화 종료 알림
-                                        await ws.send_json({
-                                            "type": "recording_completed",
-                                            "camera_id": camera_id,
-                                            "video_path": video_path,
-                                            "duration": duration
-                                        })
+                                        
+                                        # 녹화 파일이 존재하면 서버에 업로드
+                                        if video_path and duration > 0:
+                                            # 비동기 업로드 태스크 시작
+                                            asyncio.create_task(upload_video_to_server(camera_id, video_path, duration))
                                     
                                     # 상태 업데이트
                                     camera_status[camera_id] = new_status
@@ -374,7 +372,14 @@ async def handle_server_messages(camera_id, ws):
     finally:
         # 연결 종료 시 녹화 중이면 녹화 중지
         if camera_id in camera_status and camera_status[camera_id] == CAMERA_STATUS_RECORD:
-            stop_video_recording(camera_id)
+            video_path, duration = stop_video_recording(camera_id)
+            # 녹화 파일이 있으면 서버에 업로드 시도
+            if video_path and duration > 0:
+                try:
+                    loop = get_event_loop()
+                    loop.run_until_complete(upload_video_to_server(camera_id, video_path, duration))
+                except Exception as e:
+                    print(f"연결 종료 시 비디오 업로드 오류: {str(e)}")
             
         if camera_id in connection_status and connection_status[camera_id] == "connected":
             update_connection_status(camera_id, "disconnected")
@@ -528,7 +533,14 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640, flip=False):
     finally:
         # 녹화 중이면 녹화 중지
         if camera_id in camera_status and camera_status[camera_id] == CAMERA_STATUS_RECORD:
-            stop_video_recording(camera_id)
+            video_path, duration = stop_video_recording(camera_id)
+            # 녹화 파일이 있으면 서버에 업로드 시도
+            if video_path and duration > 0:
+                try:
+                    loop = get_event_loop()
+                    loop.run_until_complete(upload_video_to_server(camera_id, video_path, duration))
+                except Exception as e:
+                    print(f"연결 종료 시 비디오 업로드 오류: {str(e)}")
             
         # 연결 종료 및 리소스 정리
         await close_camera_connection(camera_id)
@@ -616,6 +628,86 @@ def stop_video_recording(camera_id):
         return recorder_info["path"], duration
     
     return None, 0
+
+# 영상 파일 업로드 함수
+async def upload_video_to_server(camera_id, video_path, duration):
+    """녹화된 비디오를 서버에 업로드"""
+    if not os.path.exists(video_path):
+        print(f"업로드할 비디오 파일을 찾을 수 없습니다: {video_path}")
+        return False
+        
+    try:
+        session = await init_session()
+        
+        # 업로드할 파일 준비
+        with open(video_path, 'rb') as f:
+            file_data = f.read()
+        
+        # 파일명을 카메라 ID로 설정 (확장자 유지)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_name = f"{camera_id}_{timestamp}.mp4"
+        
+        # multipart/form-data 요청 생성
+        data = aiohttp.FormData()
+        data.add_field('video', 
+                      file_data,
+                      filename=file_name,
+                      content_type='video/mp4')
+        data.add_field('exercise_id', 'webcam_recording')
+        data.add_field('user_id', camera_id)
+        data.add_field('camera_id', camera_id)  # 카메라 ID도 추가로 전송
+        
+        # 업로드 요청 전송
+        upload_timeout = aiohttp.ClientTimeout(total=300)  # 5분 타임아웃 (큰 파일 고려)
+        async with session.post(
+            f"{api_url}/videos/upload",
+            data=data,
+            timeout=upload_timeout
+        ) as response:
+            if response.status in (200, 201):
+                result = await response.json()
+                print(f"비디오 업로드 성공: {result.get('video_id')}")
+                
+                # 영상 정보를 서버에 추가로 전송
+                await send_recording_info(camera_id, result.get('video_id'), video_path, duration)
+                return True
+            else:
+                error_text = await response.text()
+                print(f"비디오 업로드 실패 (상태 코드: {response.status}): {error_text}")
+                return False
+                
+    except Exception as e:
+        print(f"비디오 업로드 오류: {str(e)}")
+        return False
+
+# 서버에 녹화 정보 전송
+async def send_recording_info(camera_id, video_id, video_path, duration):
+    """서버에 녹화 완료 정보 전송"""
+    if camera_id not in ws_connections:
+        print(f"카메라 {camera_id}의 웹소켓 연결이 없어 녹화 정보를 전송할 수 없습니다")
+        return False
+    
+    try:
+        ws = ws_connections[camera_id]
+        
+        # 녹화 완료 메시지 생성
+        recording_info = {
+            "type": "recording_completed",
+            "camera_id": camera_id,
+            "video_id": video_id,
+            "video_path": video_path,
+            "duration": duration,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # 메시지 전송
+        await ws.send_json(recording_info)
+        print(f"카메라 {camera_id} 녹화 정보 전송 완료")
+        return True
+        
+    except Exception as e:
+        print(f"녹화 정보 전송 오류: {str(e)}")
+        return False
 
 # 프레임 후처리 함수
 def post_process_frame(frame, mode="ready"):

@@ -491,6 +491,36 @@ async def camera_websocket(websocket: WebSocket):
                         # 클라이언트에서 종료 요청 - 정상 종료
                         print(f"카메라 {camera_id}에서 연결 종료 요청을 받음")
                         break
+                    
+                    elif msg_type == "status_changed":
+                        # 카메라 상태 변경 메시지
+                        new_status = data.get("status")
+                        if new_status and camera_id in camera_info:
+                            with data_lock:
+                                camera_info[camera_id]["status"] = new_status
+                                print(f"카메라 {camera_id} 상태 업데이트: {new_status}")
+                    
+                    elif msg_type == "recording_completed":
+                        # 녹화 완료 메시지 처리
+                        video_id = data.get("video_id")
+                        video_path = data.get("video_path")
+                        duration = data.get("duration", 0)
+                        
+                        # 녹화 정보 저장
+                        with data_lock:
+                            if camera_id in camera_info:
+                                if "recordings" not in camera_info[camera_id]:
+                                    camera_info[camera_id]["recordings"] = []
+                                
+                                # 녹화 기록 추가
+                                camera_info[camera_id]["recordings"].append({
+                                    "video_id": video_id,
+                                    "path": video_path,
+                                    "duration": duration,
+                                    "timestamp": datetime.now().isoformat()
+                                })
+                                
+                                print(f"카메라 {camera_id}의 녹화 정보 저장 완료: {video_id}, 길이: {duration:.1f}초")
                         
                 except json.JSONDecodeError:
                     # JSON 파싱 오류는 무시
@@ -679,15 +709,21 @@ async def get_uploaded_video(video_id: str):
 async def upload_exercise_video(
     video: UploadFile = File(...),
     exercise_id: str = Form(...),
-    user_id: Optional[str] = Form(None)
+    user_id: Optional[str] = Form(None),
+    camera_id: Optional[str] = Form(None)
 ):
     """운동 영상 업로드 및 분석 요청"""
     # 업로드 디렉토리 생성
     upload_dir = os.path.join(VIDEO_STORAGE_PATH, "uploads")
     os.makedirs(upload_dir, exist_ok=True)
     
-    # 파일 ID 생성
-    video_id = f"{int(time.time())}_{exercise_id}"
+    # 파일 ID 생성 (카메라 ID가 있으면 사용)
+    if camera_id:
+        timestamp = int(time.time())
+        video_id = f"{camera_id}_{timestamp}"
+    else:
+        video_id = f"{int(time.time())}_{exercise_id}"
+    
     file_path = os.path.join(upload_dir, f"{video_id}.mp4")
     
     # 파일 저장
@@ -698,8 +734,23 @@ async def upload_exercise_video(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"파일 저장 중 오류 발생: {str(e)}")
     
+    # 카메라 정보가 있는 경우 녹화 정보 추가
+    if camera_id and camera_id in camera_info:
+        with data_lock:
+            if "recordings" not in camera_info[camera_id]:
+                camera_info[camera_id]["recordings"] = []
+            
+            # 녹화 기록 추가
+            camera_info[camera_id]["recordings"].append({
+                "video_id": video_id,
+                "path": file_path,
+                "timestamp": datetime.now().isoformat(),
+                "exercise_id": exercise_id
+            })
+    
     return {
         "video_id": video_id,
+        "camera_id": camera_id,
         "exercise_id": exercise_id,
         "status": "uploaded",
         "message": "영상이 업로드되었습니다. 분석이 진행 중입니다.",
@@ -746,6 +797,39 @@ async def get_analysis_result(analysis_id: str):
             "detailed_analysis": "..."
         }
     }
+
+# 녹화 목록 조회 엔드포인트
+@app.get("/cameras/{camera_id}/recordings")
+async def get_camera_recordings(camera_id: str):
+    """카메라의 녹화 목록 조회"""
+    with data_lock:
+        if camera_id not in camera_info:
+            raise HTTPException(status_code=404, detail="카메라를 찾을 수 없습니다")
+        
+        # 녹화 목록 반환
+        recordings = camera_info[camera_id].get("recordings", [])
+        
+        return {
+            "camera_id": camera_id,
+            "recordings_count": len(recordings),
+            "recordings": recordings
+        }
+
+# 녹화 비디오 스트리밍 엔드포인트
+@app.get("/cameras/{camera_id}/recordings/{video_id}")
+async def stream_recording(camera_id: str, video_id: str):
+    """카메라의 녹화 비디오 스트리밍"""
+    # 업로드된 비디오 경로 생성
+    video_path = os.path.join(VIDEO_STORAGE_PATH, "uploads", f"{video_id}.mp4")
+    
+    if not os.path.exists(video_path):
+        raise HTTPException(status_code=404, detail="녹화 비디오를 찾을 수 없습니다")
+    
+    return FileResponse(
+        video_path,
+        media_type="video/mp4",
+        filename=f"recording_{camera_id}_{video_id}.mp4"
+    )
 
 # 서버 실행 (직접 실행 시)
 if __name__ == "__main__":
