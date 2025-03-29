@@ -427,7 +427,8 @@ async def camera_websocket(websocket: WebSocket):
                 "info": data.get("info", {}),
                 "last_seen": datetime.now(),
                 "websocket": websocket,
-                "subscribers": set()  # 구독자 목록 초기화
+                "subscribers": set(),  # 구독자 목록 초기화
+                "status": data.get("status", "on")  # 클라이언트가 제공한 상태 또는 기본값 'on'
             }
         
         # 카메라에 ID 전송
@@ -436,7 +437,7 @@ async def camera_websocket(websocket: WebSocket):
             "camera_id": camera_id
         })
         
-        print(f"웹캠 연결됨: {camera_id}")
+        print(f"웹캠 연결됨: {camera_id}, 상태: {camera_info[camera_id].get('status', 'on')}")
         
         # 연결 유지 및 프레임 수신 루프
         last_seen = datetime.now()

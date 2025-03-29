@@ -11,6 +11,8 @@ import signal
 from datetime import datetime, timedelta
 import random
 
+from pose_detection import YoloPoseModel
+
 # 스레드별 전용 세션과 이벤트 루프
 thread_local = threading.local()
 
@@ -21,12 +23,29 @@ server_time_offset = 0.0  # 서버와의 시간차 (초 단위)
 ws_connections = {}  # 카메라 ID -> WebSocket 연결
 connection_status = {}  # 카메라 ID -> 연결 상태 ("connected", "connecting", "disconnected")
 last_ping_times = {}  # 카메라 ID -> 마지막 핑 전송 시간
+pose_model = None  # YOLO 포즈 모델 인스턴스
+last_pose_detection_times = {}  # 카메라 ID -> 마지막 포즈 감지 시간
+camera_status = {}  # 카메라 ID -> 상태 ("off", "on", "ready", "record", "detect")
+video_recorders = {}  # 카메라 ID -> 비디오 레코더 객체
+
+# 카메라 상태 정의
+CAMERA_STATUS_OFF = "off"        # 초기상태, 이미지 캡쳐가 진행되지 않음
+CAMERA_STATUS_ON = "on"          # 이미지 캡쳐가 진행되어 서버에 전달
+CAMERA_STATUS_READY = "ready"    # 이미지 캡쳐 및 후처리(개발 예정) 후 서버에 전달
+CAMERA_STATUS_RECORD = "record"  # 이미지 캡쳐 및 후처리(개발 예정) 후 서버에 전달, 웹캠 화면을 비디오로 저장
+CAMERA_STATUS_DETECT = "detect"  # 이미지 캡쳐 및 좌표 추출 후 서버에 전달
 
 # WebSocket 연결 설정
 MAX_RECONNECT_ATTEMPTS = 3  # 최대 재연결 시도 횟수
 RECONNECT_DELAY = 2.0  # 초기 재연결 지연 시간(초)
 PING_INTERVAL = 10  # 핑 전송 간격 (초)
 FLIP_HORIZONTAL = False  # 좌우 반전 기본값
+POSE_DETECTION_INTERVAL = 1.0  # 포즈 감지 간격 (초)
+
+# 비디오 녹화 관련 상수
+VIDEO_OUTPUT_DIR = "video_webcam"
+VIDEO_FPS = 15
+VIDEO_FORMAT = ".mp4"
 
 # 서버 시간 동기화 함수
 async def sync_server_time():
@@ -211,8 +230,14 @@ async def close_camera_connection(camera_id):
 # WebSocket 연결 및 카메라 등록
 async def connect_camera_websocket(camera_id, camera_info, retry_count=0):
     """WebSocket을 통해 카메라 연결 및 등록"""
+    global camera_status
+    
     # 연결 상태 업데이트
     update_connection_status(camera_id, "connecting")
+    
+    # 카메라 상태가 없으면 기본 ON 상태로 설정
+    if camera_id not in camera_status:
+        camera_status[camera_id] = CAMERA_STATUS_ON
     
     try:
         session = await init_session()
@@ -233,11 +258,12 @@ async def connect_camera_websocket(camera_id, camera_info, retry_count=0):
             max_msg_size=0
         )
         
-        # 카메라 등록 메시지 전송
+        # 카메라 등록 메시지 전송 - 상태 정보 추가
         register_msg = {
             "type": "register",
             "camera_id": camera_id,
-            "info": camera_info
+            "info": camera_info,
+            "status": camera_status[camera_id]  # 현재 상태 정보 추가
         }
         
         await ws.send_json(register_msg)
@@ -250,6 +276,13 @@ async def connect_camera_websocket(camera_id, camera_info, retry_count=0):
             ws_connections[camera_id] = ws
             update_connection_status(camera_id, "connected")
             last_ping_times[camera_id] = time.time()
+            
+            # 서버에 현재 상태 명시적으로 알림
+            await ws.send_json({
+                "type": "status_changed",
+                "camera_id": camera_id,
+                "status": camera_status[camera_id]
+            })
             
             # 서버 메시지 처리 태스크 시작
             asyncio.create_task(handle_server_messages(camera_id, ws))
@@ -275,6 +308,12 @@ async def connect_camera_websocket(camera_id, camera_info, retry_count=0):
 # 서버 메시지 처리 함수
 async def handle_server_messages(camera_id, ws):
     """서버의 WebSocket 메시지를 처리하는 함수"""
+    global camera_status, video_recorders
+    
+    # 초기 상태는 켜짐
+    if camera_id not in camera_status:
+        camera_status[camera_id] = CAMERA_STATUS_ON
+    
     try:
         # 연결이 유지되는 동안 반복
         while camera_id in ws_connections and connection_status.get(camera_id) == "connected":
@@ -290,6 +329,40 @@ async def handle_server_messages(camera_id, ws):
                         last_ping_times[camera_id] = time.time()
                     elif msg.data == "pong":
                         last_ping_times[camera_id] = time.time()
+                    else:
+                        # JSON 메시지 처리
+                        try:
+                            data = json.loads(msg.data)
+                            # 상태 제어 메시지 처리
+                            if data.get("type") == "status_control":
+                                old_status = camera_status.get(camera_id, CAMERA_STATUS_ON)
+                                new_status = data.get("status", CAMERA_STATUS_ON)
+                                
+                                # 상태 변경 확인
+                                if old_status != new_status:
+                                    # 녹화 중 상태에서 다른 상태로 변경 시 녹화 종료
+                                    if old_status == CAMERA_STATUS_RECORD and new_status != CAMERA_STATUS_RECORD:
+                                        video_path, duration = stop_video_recording(camera_id)
+                                        # 서버에 녹화 종료 알림
+                                        await ws.send_json({
+                                            "type": "recording_completed",
+                                            "camera_id": camera_id,
+                                            "video_path": video_path,
+                                            "duration": duration
+                                        })
+                                    
+                                    # 상태 업데이트
+                                    camera_status[camera_id] = new_status
+                                    print(f"카메라 {camera_id} 상태 변경: {old_status} -> {new_status}")
+                                    
+                                    # 서버에 상태 변경 확인 메시지 전송
+                                    await ws.send_json({
+                                        "type": "status_changed",
+                                        "camera_id": camera_id,
+                                        "status": new_status
+                                    })
+                        except json.JSONDecodeError:
+                            pass
                 # 연결 종료 메시지 처리
                 elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                     break
@@ -299,13 +372,17 @@ async def handle_server_messages(camera_id, ws):
                 print(f"서버 메시지 처리 오류: {str(e)}")
                 break
     finally:
+        # 연결 종료 시 녹화 중이면 녹화 중지
+        if camera_id in camera_status and camera_status[camera_id] == CAMERA_STATUS_RECORD:
+            stop_video_recording(camera_id)
+            
         if camera_id in connection_status and connection_status[camera_id] == "connected":
             update_connection_status(camera_id, "disconnected")
             if camera_id in ws_connections:
                 del ws_connections[camera_id]
 
 # WebSocket을 통한 이미지 전송
-async def send_frame_via_websocket(camera_id, image_data, timestamp):
+async def send_frame_via_websocket(camera_id, image_data, timestamp, pose_data=None):
     """WebSocket을 통해 이미지 프레임 전송"""
     if camera_id not in ws_connections:
         return False
@@ -320,6 +397,11 @@ async def send_frame_via_websocket(camera_id, image_data, timestamp):
             "image_data": image_data,
             "timestamp": timestamp.isoformat()
         }
+        
+        # 포즈 데이터가 있으면 추가
+        if pose_data:
+            frame_msg["pose_data"] = pose_data
+            frame_msg["type"] = "frame_with_pose"
         
         # 메시지 전송
         await ws.send_json(frame_msg)
@@ -337,6 +419,12 @@ async def send_frame_via_websocket(camera_id, image_data, timestamp):
 # 메인 카메라 처리 루프
 async def camera_loop(camera_id, camera, quality=85, max_width=640, flip=False):
     """단일 카메라 처리 비동기 루프"""
+    global pose_model, camera_status, last_pose_detection_times
+    
+    # 포즈 감지 모델이 없으면 초기화
+    if pose_model is None:
+        pose_model = YoloPoseModel()
+    
     # 카메라 정보 구성
     camera_info = {
         "width": int(camera.get(cv2.CAP_PROP_FRAME_WIDTH)),
@@ -355,6 +443,12 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640, flip=False):
     last_sync_time = time.time()
     last_ping_time = time.time()
     last_frame_time = datetime.now()
+    
+    # 포즈 감지 시간 초기화
+    last_pose_detection_times[camera_id] = time.time() - POSE_DETECTION_INTERVAL  # 시작 시 바로 감지하도록 설정
+    
+    # 카메라 상태 초기화
+    camera_status[camera_id] = CAMERA_STATUS_ON
     
     # 최초 웹소켓 연결
     if not await connect_camera_websocket(camera_id, camera_info):
@@ -388,6 +482,14 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640, flip=False):
                         update_connection_status(camera_id, "disconnected")
                         continue
             
+            # 현재 카메라 상태 확인
+            current_status = camera_status.get(camera_id, CAMERA_STATUS_ON)
+            
+            # OFF 상태면 프레임 처리 건너뛰기
+            if current_status == CAMERA_STATUS_OFF:
+                await asyncio.sleep(0.5)  # 주기적으로 확인
+                continue
+            
             # 프레임 캡처
             ret, frame = camera.read()
             
@@ -401,17 +503,16 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640, flip=False):
             
             # 지정된 FPS에 따라 이미지 업로드
             if time_diff >= frame_interval:
-                # 이미지 인코딩
-                image_data = encode_image(frame, quality=quality, max_width=max_width, flip=flip)
+                # 서버 시간 기준으로 타임스탬프 생성
+                server_timestamp = get_server_time()
                 
-                if image_data:
-                    # 서버 시간 기준으로 타임스탬프 생성
-                    server_timestamp = get_server_time()
-                    
-                    # WebSocket을 통해 이미지 전송
-                    if await send_frame_via_websocket(camera_id, image_data, server_timestamp):
-                        last_frame_time = current_time
-                    
+                # 상태에 따른 프레임 처리
+                if await process_frame_by_status(
+                    camera_id, frame, server_timestamp, current_status, 
+                    quality=quality, max_width=max_width, flip=flip
+                ):
+                    last_frame_time = current_time
+            
             # 적절한 딜레이
             remaining_time = frame_interval - (datetime.now() - current_time).total_seconds()
             if remaining_time > 0:
@@ -425,6 +526,10 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640, flip=False):
     except Exception as e:
         print(f"카메라 {camera_id} 루프 오류: {str(e)}")
     finally:
+        # 녹화 중이면 녹화 중지
+        if camera_id in camera_status and camera_status[camera_id] == CAMERA_STATUS_RECORD:
+            stop_video_recording(camera_id)
+            
         # 연결 종료 및 리소스 정리
         await close_camera_connection(camera_id)
         camera.release()
@@ -458,10 +563,124 @@ def run_camera_thread(camera_id, camera_index, fps=15, quality=85, max_width=640
         except Exception as e:
             print(f"세션 정리 오류: {str(e)}")
 
+# 비디오 녹화 시작 함수
+def start_video_recording(camera_id, frame_width, frame_height, fps=VIDEO_FPS):
+    """비디오 녹화 시작"""
+    global video_recorders
+    
+    # 출력 디렉토리 생성
+    os.makedirs(VIDEO_OUTPUT_DIR, exist_ok=True)
+    
+    # 현재 시간으로 파일명 생성
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    video_path = os.path.join(VIDEO_OUTPUT_DIR, f"{camera_id}_{timestamp}{VIDEO_FORMAT}")
+    
+    # OpenCV VideoWriter 생성
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # MP4 코덱
+    video_writer = cv2.VideoWriter(video_path, fourcc, fps, (frame_width, frame_height))
+    
+    if not video_writer.isOpened():
+        print(f"카메라 {camera_id} 비디오 녹화 초기화 실패")
+        return None
+    
+    video_recorders[camera_id] = {
+        "writer": video_writer,
+        "path": video_path,
+        "start_time": datetime.now()
+    }
+    
+    print(f"카메라 {camera_id} 비디오 녹화 시작: {video_path}")
+    return video_writer
+
+# 비디오 녹화 중지 함수
+def stop_video_recording(camera_id):
+    """비디오 녹화 중지"""
+    global video_recorders
+    
+    if camera_id in video_recorders and video_recorders[camera_id]["writer"]:
+        # 녹화 정보 저장
+        recorder_info = video_recorders[camera_id]
+        video_writer = recorder_info["writer"]
+        
+        # 리소스 해제
+        video_writer.release()
+        
+        # 녹화 시간 계산
+        duration = (datetime.now() - recorder_info["start_time"]).total_seconds()
+        
+        print(f"카메라 {camera_id} 비디오 녹화 종료: {recorder_info['path']} ({duration:.1f}초)")
+        
+        # 레코더 정보에서 writer 제거 (나머지 정보는 유지)
+        video_recorders[camera_id]["writer"] = None
+        
+        return recorder_info["path"], duration
+    
+    return None, 0
+
+# 프레임 후처리 함수
+def post_process_frame(frame, mode="ready"):
+    """프레임 후처리 (상태에 따라 다른 처리)"""
+    # 실제 후처리가 필요한 경우 여기에 코드 구현
+    # 현재는 원본 프레임을 그대로 반환
+    return frame
+
+# 카메라 상태에 따른 프레임 처리 함수
+async def process_frame_by_status(camera_id, frame, timestamp, status, quality=85, max_width=640, flip=False):
+    """카메라 상태에 따라 프레임 처리"""
+    global pose_model, video_recorders, last_pose_detection_times
+    
+    result_frame = frame.copy()
+    pose_data = None
+    
+    # 상태별 처리
+    if status == CAMERA_STATUS_OFF:
+        # 프레임 처리 안함
+        return False
+    
+    elif status in [CAMERA_STATUS_ON, CAMERA_STATUS_READY]:
+        if status == CAMERA_STATUS_READY:
+            # READY 상태에서는 후처리 수행
+            result_frame = post_process_frame(result_frame, "ready")
+    
+    elif status == CAMERA_STATUS_RECORD:
+        # 녹화 상태 처리
+        if camera_id not in video_recorders or not video_recorders.get(camera_id, {}).get("writer"):
+            # 녹화 중이 아니면 녹화 시작
+            height, width = frame.shape[:2]
+            start_video_recording(camera_id, width, height)
+        
+        # 후처리 수행
+        result_frame = post_process_frame(result_frame, "ready")
+        
+        # 비디오에 프레임 저장
+        if camera_id in video_recorders and video_recorders[camera_id].get("writer"):
+            # 녹화할 프레임을 좌우 반전 처리 (필요한 경우)
+            record_frame = result_frame
+            if flip:
+                record_frame = cv2.flip(record_frame, 1)
+            video_recorders[camera_id]["writer"].write(record_frame)
+    
+    elif status == CAMERA_STATUS_DETECT:
+        # 포즈 감지 수행
+        now = time.time()
+        if pose_model and (now - last_pose_detection_times.get(camera_id, 0) >= POSE_DETECTION_INTERVAL):
+            pose_data = pose_model.detect_pose(result_frame.copy())
+            last_pose_detection_times[camera_id] = now
+    
+    # 이미지 인코딩 (좌우 반전 처리는 encode_image 함수에서 처리됨)
+    image_data = encode_image(result_frame, quality=quality, max_width=max_width, flip=flip)
+    
+    if image_data:
+        # WebSocket을 통해 이미지 전송
+        if await send_frame_via_websocket(camera_id, image_data, timestamp, pose_data):
+            return True
+    
+    return False
+
 # 메인 함수
 def main():
     """메인 프로그램"""
-    global running, api_url, FLIP_HORIZONTAL
+    global running, api_url, FLIP_HORIZONTAL, POSE_DETECTION_INTERVAL
     
     # 인자 파서 설정
     parser = argparse.ArgumentParser(description="KOMI 웹캠 클라이언트")
@@ -477,11 +696,14 @@ def main():
                         help='카메라 프레임 레이트 (기본값: 15)')
     parser.add_argument('--flip', action='store_false',
                         help='카메라 이미지 좌우 반전 비활성화')
+    parser.add_argument('--pose-interval', type=float, default=1.0,
+                        help='포즈 감지 간격 (초, 기본값: 1.0)')
     
     # 인자 파싱
     args = parser.parse_args()
     api_url = args.server
     FLIP_HORIZONTAL = args.flip
+    POSE_DETECTION_INTERVAL = args.pose_interval
     
     # 압축 품질 범위 확인
     quality = max(1, min(100, args.quality))  # 1-100 범위로 제한
@@ -493,6 +715,7 @@ def main():
     print(f"프레임 레이트: {args.fps}")
     print(f"이미지 품질: {quality}")
     print(f"최대 이미지 폭: {max_width}px")
+    print(f"포즈 감지 간격: {POSE_DETECTION_INTERVAL}초")
     if FLIP_HORIZONTAL:
         print("카메라 이미지 좌우 반전: 활성화")
     
