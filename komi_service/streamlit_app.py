@@ -59,6 +59,8 @@ if 'selected_cameras' not in st.session_state:
     st.session_state.selected_cameras = []
 if 'cameras' not in st.session_state:
     st.session_state.cameras = []
+if 'camera_statuses' not in st.session_state:
+    st.session_state.camera_statuses = {}
 if 'server_status' not in st.session_state:
     st.session_state.server_status = None
 if 'camera_images' not in st.session_state:
@@ -131,17 +133,32 @@ async def async_get_cameras():
         async with session.get(f"{API_URL}/cameras", timeout=request_timeout) as response:
             if response.status == 200:
                 data = await response.json()
-                return data.get("cameras", []), "연결됨"
-            return [], "오류"
+                cameras = data.get("cameras", [])
+                # 카메라 상태 정보 가져오기
+                camera_statuses = {}
+                for camera_id in cameras:
+                    try:
+                        async with session.get(f"{API_URL}/cameras/{camera_id}/status", timeout=request_timeout) as status_response:
+                            if status_response.status == 200:
+                                status_data = await status_response.json()
+                                camera_statuses[camera_id] = status_data.get("status", "off")
+                    except Exception as e:
+                        print(f"카메라 {camera_id} 상태 요청 오류: {str(e)}")
+                        camera_statuses[camera_id] = "off"
+                
+                # 상태 정보와 함께 카메라 목록 반환
+                return cameras, camera_statuses, "연결됨"
+            return [], {}, "오류"
     except Exception as e:
         print(f"카메라 목록 요청 오류: {str(e)}")
-        return [], "연결 실패"
+        return [], {}, "연결 실패"
 
 # 동기 카메라 목록 가져오기 (Streamlit 호환용)
 def get_cameras():
     """카메라 목록 가져오기 (동기 래퍼)"""
-    cameras, status = run_async(async_get_cameras())
+    cameras, camera_statuses, status = run_async(async_get_cameras())
     st.session_state.server_status = status
+    st.session_state.camera_statuses = camera_statuses
     return cameras
 
 # 스레드에서 이미지 디코딩 처리
@@ -525,14 +542,31 @@ def main():
             st.rerun()
         return
     
-    # 카메라 다중 선택기
-    if st.session_state.cameras:
-        # 기본값 설정 (이전에 선택된 카메라 유지)
-        default_cameras = st.session_state.selected_cameras if st.session_state.selected_cameras else st.session_state.cameras[:min(2, len(st.session_state.cameras))]
+    # 상태가 'off'가 아닌 카메라만 필터링
+    active_cameras = []
+    if hasattr(st.session_state, 'camera_statuses'):
+        active_cameras = [
+            camera_id for camera_id in st.session_state.cameras
+            if st.session_state.camera_statuses.get(camera_id, "off") != "off"
+        ]
+    
+    # 활성화된 카메라가 없으면 메시지 표시
+    if not active_cameras:
+        st.warning("활성화된 카메라가 없습니다. 모든 카메라가 'off' 상태입니다.")
+        if st.button("새로고침"):
+            st.session_state.cameras = get_cameras()
+            st.rerun()
+        return
+    
+    # 카메라 다중 선택기 - 활성화된 카메라만 선택 가능
+    if active_cameras:
+        # 이전에 선택된 카메라 중 여전히 활성화된 것만 기본값으로 설정
+        valid_selected = [cam for cam in st.session_state.selected_cameras if cam in active_cameras]
+        default_cameras = valid_selected if valid_selected else active_cameras[:min(2, len(active_cameras))]
         
         selected = st.multiselect(
             "모니터링할 카메라 선택 (최대 2대)",
-            st.session_state.cameras,
+            active_cameras,
             default=default_cameras,
             max_selections=2
         )
