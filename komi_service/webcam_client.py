@@ -25,6 +25,7 @@ connection_status = {}  # 카메라 ID -> 연결 상태 ("connected", "connectin
 last_ping_times = {}  # 카메라 ID -> 마지막 핑 전송 시간
 pose_model = None  # YOLO 포즈 모델 인스턴스
 last_pose_detection_times = {}  # 카메라 ID -> 마지막 포즈 감지 시간
+camera_power_status = {}  # 카메라 ID -> 전원 상태 (True/False)
 
 # WebSocket 연결 설정
 MAX_RECONNECT_ATTEMPTS = 3  # 최대 재연결 시도 횟수
@@ -280,6 +281,12 @@ async def connect_camera_websocket(camera_id, camera_info, retry_count=0):
 # 서버 메시지 처리 함수
 async def handle_server_messages(camera_id, ws):
     """서버의 WebSocket 메시지를 처리하는 함수"""
+    global camera_power_status
+    
+    # 초기 전원 상태는 꺼짐
+    if camera_id not in camera_power_status:
+        camera_power_status[camera_id] = False
+        
     try:
         # 연결이 유지되는 동안 반복
         while camera_id in ws_connections and connection_status.get(camera_id) == "connected":
@@ -295,6 +302,17 @@ async def handle_server_messages(camera_id, ws):
                         last_ping_times[camera_id] = time.time()
                     elif msg.data == "pong":
                         last_ping_times[camera_id] = time.time()
+                    else:
+                        # JSON 메시지 처리
+                        try:
+                            data = json.loads(msg.data)
+                            # 전원 제어 메시지 처리
+                            if data.get("type") == "power_control":
+                                power_status = data.get("power", True)
+                                camera_power_status[camera_id] = power_status
+                                print(f"카메라 {camera_id} 전원 상태: {'켜짐' if power_status else '꺼짐'}")
+                        except json.JSONDecodeError:
+                            pass
                 # 연결 종료 메시지 처리
                 elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                     break
@@ -347,7 +365,7 @@ async def send_frame_via_websocket(camera_id, image_data, timestamp, pose_data=N
 # 메인 카메라 처리 루프
 async def camera_loop(camera_id, camera, quality=85, max_width=640, flip=False):
     """단일 카메라 처리 비동기 루프"""
-    global pose_model
+    global pose_model, camera_power_status
     
     # 포즈 감지 모델이 없으면 초기화
     if pose_model is None:
@@ -377,6 +395,9 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640, flip=False):
     
     # 포즈 감지 시간 초기화
     last_pose_detection_times[camera_id] = time.time() - POSE_DETECTION_INTERVAL  # 시작 시 바로 감지하도록 설정
+    
+    # 카메라 전원 상태 초기화
+    camera_power_status[camera_id] = False
     
     # 최초 웹소켓 연결
     if not await connect_camera_websocket(camera_id, camera_info):
@@ -409,6 +430,12 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640, flip=False):
                             del ws_connections[camera_id]
                         update_connection_status(camera_id, "disconnected")
                         continue
+            
+            # 카메라 전원 상태 확인
+            if not camera_power_status.get(camera_id, True):
+                # 카메라가 꺼진 상태면 프레임 처리 건너뛰기
+                await asyncio.sleep(0.5)  # 주기적으로 확인
+                continue
             
             # 프레임 캡처
             ret, frame = camera.read()

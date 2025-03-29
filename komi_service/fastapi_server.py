@@ -124,6 +124,40 @@ async def get_exercises():
     """사용 가능한 운동 목록 조회"""
     return {"exercises": exercise_data["exercises"]}
 
+# 카메라 켜기/끄기 엔드포인트
+@app.post("/cameras/{camera_id}/power")
+async def camera_power_control(
+    camera_id: str,
+    power_status: bool = Body(..., embed=True)
+):
+    """카메라 전원 제어 (켜기/끄기)"""
+    with data_lock:
+        if camera_id not in camera_info:
+            raise HTTPException(status_code=404, detail="카메라를 찾을 수 없습니다")
+        
+        if "websocket" not in camera_info[camera_id]:
+            raise HTTPException(status_code=400, detail="카메라가 현재 연결되어 있지 않습니다")
+        
+        try:
+            # 카메라 클라이언트에 명령 전송
+            websocket = camera_info[camera_id]["websocket"]
+            await websocket.send_json({
+                "type": "power_control",
+                "power": power_status
+            })
+            
+            # 카메라 상태 업데이트
+            camera_info[camera_id]["power_status"] = "on" if power_status else "off"
+            
+            return {
+                "status": "success",
+                "camera_id": camera_id,
+                "power": "on" if power_status else "off",
+                "message": f"카메라가 {'켜졌습니다' if power_status else '꺼졌습니다'}"
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"카메라 제어 중 오류 발생: {str(e)}")
+
 @app.get("/exercise/{exercise_id}")
 async def get_exercise_detail(exercise_id: str):
     """특정 운동의 상세 정보 조회"""
