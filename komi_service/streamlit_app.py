@@ -834,6 +834,7 @@ def exercise_guide_page():
 def posture_analysis_page():
     """자세 정밀 분석 페이지"""
     global thread_camera_list
+    st.session_state.cameras = get_cameras()
     
     # 네비게이션 버튼    
     col1, col2 = st.columns(2)
@@ -855,7 +856,7 @@ def posture_analysis_page():
     if not st.session_state.cameras:
         st.info("연결된 카메라가 없습니다")
         if st.button("새로고침", key="refresh_camera_btn1"):
-            st.session_state.cameras = get_cameras()
+            # st.session_state.cameras = get_cameras()
             st.rerun()
         return
     
