@@ -30,3 +30,10 @@ def angle_difference(kps1, kps2, a, b, c):
     angle1 = compute_angle(*p1)
     angle2 = compute_angle(*p2)
     return abs(angle1 - angle2)
+
+# 각도 유사도 평가
+def cosine_similarity(vec1, vec2):
+    norm1, norm2 = np.linalg.norm(vec1), np.linalg.norm(vec2)
+    if norm1 == 0 or norm2 == 0:
+        return 0.0
+    return np.dot(vec1, vec2) / (norm1 * norm2)
