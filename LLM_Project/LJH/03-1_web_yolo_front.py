@@ -235,7 +235,7 @@ for image_file in image_files:
 
 # FFmpeg로 H.264 인코딩된 MP4로 변환
 print("FFmpeg로 MP4(H.264)로 변환 중...")
-ffmpeg_command = f'ffmpeg -y -i "{video_path}/recorded_video.avi" -vcodec libx264 -crf 23 "{mp4_output}"'
+ffmpeg_command = f'ffmpeg -y -i "{video_path}" -vcodec libx264 -crf 23 "{mp4_output}"'
 os.system(ffmpeg_command)
 
 # 변환 성공 여부 확인
@@ -243,7 +243,7 @@ if os.path.exists(mp4_output) and os.path.getsize(mp4_output) > 1000:
     print("MP4(H.264) 영상 저장 완료:", mp4_output)
 
     try :
-        os.remove(f'{video_path}/recorded_video.avi')
+        os.remove(f'{video_path}')
         print("임시 파일 삭제 완료")
 
     except:
