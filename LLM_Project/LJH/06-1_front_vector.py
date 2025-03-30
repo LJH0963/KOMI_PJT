@@ -3,6 +3,8 @@ import json
 from utils import *
 
 # JSON 형태로 평가 결과 저장 (컬럼별 key로 분리)
+## Trouble Shooting : CSV로 전달 시 값을 가져오는 것이 어렵다는 판단 -> json으로 저장하는 것으로 함
+### + 새로운 key인 "failed part"를 적용, 조금 더 직관적으로 보이고, 찾도록 함.
 def evaluate_pose_front_by_angles_json(answer_dir, target_dir, output_json_path):
     answer_files = sorted([f for f in os.listdir(answer_dir) if f.endswith('.json')])
     target_files = sorted([f for f in os.listdir(target_dir) if f.endswith('.json')])
