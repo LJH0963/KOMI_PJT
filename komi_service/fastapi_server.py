@@ -622,8 +622,8 @@ async def camera_status_control(
     camera_id: str,
     status: str = Body(..., embed=True)
 ):
-    """카메라 상태 제어 (off, on, ready, record, detect)"""
-    valid_statuses = ["off", "on", "ready", "record", "detect"]
+    """카메라 상태 제어 (off, on, mask, ready, record, detect)"""
+    valid_statuses = ["off", "on", "mask", "ready", "record", "detect"]
     
     if status not in valid_statuses:
         raise HTTPException(

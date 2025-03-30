@@ -201,6 +201,34 @@ def get_cameras():
     st.session_state.camera_statuses = camera_statuses
     return cameras
 
+# 카메라 상태 변경하기
+async def async_set_camera_status(camera_id, status):
+    """비동기적으로 카메라 상태 변경하기"""
+    try:
+        session = await init_session()
+        request_timeout = aiohttp.ClientTimeout(total=2)
+        # POST 요청으로 카메라 상태 변경
+        async with session.post(
+            f"{API_URL}/cameras/{camera_id}/status", 
+            json={"status": status},
+            timeout=request_timeout
+        ) as response:
+            if response.status == 200:
+                data = await response.json()
+                print(f"카메라 {camera_id} 상태가 '{status}'로 변경됨")
+                return data
+            else:
+                print(f"카메라 상태 변경 실패: {response.status}")
+                return None
+    except Exception as e:
+        print(f"카메라 상태 변경 오류: {str(e)}")
+        return None
+
+# 카메라 상태 변경 (동기 래퍼)
+def set_camera_status(camera_id, status):
+    """카메라 상태 변경 (동기 래퍼)"""
+    return run_async(async_set_camera_status(camera_id, status))
+
 # 스레드에서 이미지 디코딩 처리
 def process_image_in_thread(image_data):
     """별도 스레드에서 이미지 처리"""
@@ -875,6 +903,12 @@ def posture_analysis_page():
             st.session_state.cameras = get_cameras()
             st.rerun()
         return
+    
+    # 활성화된 카메라들의 상태를 "mask"로 변경
+    for camera_id in active_cameras:
+        result = set_camera_status(camera_id, "mask")
+        if result:
+            st.session_state.camera_statuses[camera_id] = "mask"
     
     # 페이지 로드 시 모니터링 상태 활성화 표시
     st.session_state.is_monitoring = True
