@@ -128,6 +128,32 @@ def run_async(coroutine):
     loop = get_event_loop()
     return loop.run_until_complete(coroutine)
 
+# 백그라운드 스레드에서 비동기 루프 실행
+def run_async_loop():
+    """비동기 루프를 실행하는 스레드 함수"""
+    # 이 스레드 전용 이벤트 루프 생성
+    loop = get_event_loop()
+    
+    try:
+        # 이미지 업데이트 태스크 생성
+        task = loop.create_task(update_images())
+        
+        # 이벤트 루프 실행
+        loop.run_until_complete(task)
+    except Exception as e:
+        print(f"비동기 루프 오류: {str(e)}")
+    finally:
+        # 모든 태스크 취소
+        for task in asyncio.all_tasks(loop):
+            task.cancel()
+        
+        # 취소된 태스크 완료 대기
+        if asyncio.all_tasks(loop):
+            loop.run_until_complete(asyncio.gather(*asyncio.all_tasks(loop), return_exceptions=True))
+        
+        # 루프 중지
+        loop.stop()
+
 # 비동기 카메라 목록 가져오기
 async def async_get_cameras():
     """비동기적으로 카메라 목록 가져오기"""
@@ -361,32 +387,6 @@ async def update_images():
         # 사용했던 세션 정리
         await close_session()
 
-# 백그라운드 스레드에서 비동기 루프 실행
-def run_async_loop():
-    """비동기 루프를 실행하는 스레드 함수"""
-    # 이 스레드 전용 이벤트 루프 생성
-    loop = get_event_loop()
-    
-    try:
-        # 이미지 업데이트 태스크 생성
-        task = loop.create_task(update_images())
-        
-        # 이벤트 루프 실행
-        loop.run_until_complete(task)
-    except Exception as e:
-        print(f"비동기 루프 오류: {str(e)}")
-    finally:
-        # 모든 태스크 취소
-        for task in asyncio.all_tasks(loop):
-            task.cancel()
-        
-        # 취소된 태스크 완료 대기
-        if asyncio.all_tasks(loop):
-            loop.run_until_complete(asyncio.gather(*asyncio.all_tasks(loop), return_exceptions=True))
-        
-        # 루프 중지
-        loop.stop()
-
 # WebSocket 연결 및 이미지 스트리밍 수신 - 안정성 개선
 async def connect_to_camera_stream(camera_id):
     """WebSocket을 통해 카메라 스트림에 연결"""
@@ -523,15 +523,13 @@ async def connect_to_camera_stream(camera_id):
 def monitor_cameras(active_cameras):
     """활성화된 카메라를 모니터링하는 함수"""
     global selected_cameras, is_running
-    
+    print(active_cameras)
     # 운동 정보 표시
     if "exercise_id" in st.session_state and st.session_state.exercise_id:
         exercise = get_exercise_detail(st.session_state.exercise_id)
         if exercise:
             st.text(f"{exercise['name']} 실시간 모니터링")
             # st.text(exercise["description"])
-    else:
-        st.title("카메라 스트리밍")
     
     # 활성화된 카메라 자동 선택 (최대 2대)
     max_cameras = min(2, len(active_cameras))
