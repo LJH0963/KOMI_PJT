@@ -59,15 +59,17 @@ def evaluate_pose_front_by_angles(answer_dir, target_dir, output_csv_path):
 
         records.append({
             "file_name": file_name,
-            "left_hip_angle_diff": round(left_hip_diff, 2),
-            "right_hip_angle_diff": round(right_hip_diff, 2),
-            "left_knee_angle_diff": round(left_knee_diff, 2),
-            "right_knee_angle_diff": round(right_knee_diff, 2),
-            "pass_left_hip": pass_left_hip,
-            "pass_right_hip": pass_right_hip,
-            "pass_left_knee": pass_left_knee,
-            "pass_right_knee": pass_right_knee,
-            "cosine_similarity": round(sim_score, 4)
+            "[left_hip_angle_diff, right_hipt_angle_diff, left_knee_angle_diff, right_knee_angle_diff, pass_left_hip, pass_right_hip, pass_left_knee, pass_right_knee, cosine_similarity]": [
+        round(left_hip_diff, 2),
+        round(right_hip_diff, 2),
+        round(left_knee_diff, 2),
+        round(right_knee_diff, 2),
+        pass_left_hip,
+        pass_right_hip,
+        pass_left_knee,
+        pass_right_knee,
+        round(sim_score, 4)
+    ]
         })
 
     df = pd.DataFrame(records)
