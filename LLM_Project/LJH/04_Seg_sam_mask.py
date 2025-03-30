@@ -8,7 +8,7 @@ from segment_anything import sam_model_registry, SamPredictor
 from tkinter import filedialog
 
 # 입력 및 출력 디렉토리 설정
-input_dir = "C:/Users/user/Desktop/img_output/squat/front"  # 입력 이미지 폴더
+input_dir = "C:/Users/user/Desktop/img_output/squat/side"  # 입력 이미지 폴더
 output_dir = "C:/Users/user/Desktop/img_output/squat/mask"  # 세그멘테이션 결과 저장 폴더
 os.makedirs(output_dir, exist_ok=True)  # 출력 폴더 생성
 
@@ -16,7 +16,7 @@ os.makedirs(output_dir, exist_ok=True)  # 출력 폴더 생성
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # YOLOv8 모델 로드
-model = YOLO('yolov8n.pt')
+model = YOLO('yolo11x.pt')
 
 # SAM 모델 로드
 sam_checkpoint = "C:/WANTED/LLM/KOMI_PJT/tests/LJH/sam_vit_h_4b8939.pth"
