@@ -31,8 +31,9 @@ video_recorders = {}  # 카메라 ID -> 비디오 레코더 객체
 # 카메라 상태 정의
 CAMERA_STATUS_OFF = "off"        # 초기상태, 이미지 캡쳐가 진행되지 않음
 CAMERA_STATUS_ON = "on"          # 이미지 캡쳐가 진행되어 서버에 전달
-CAMERA_STATUS_READY = "ready"    # 이미지 캡쳐 및 후처리(개발 예정) 후 서버에 전달
-CAMERA_STATUS_RECORD = "record"  # 이미지 캡쳐 및 후처리(개발 예정) 후 서버에 전달, 웹캠 화면을 비디오로 저장
+CAMERA_STATUS_MASK = "mask"      # 이미지 캡쳐 및 후처리(반투명 mask 추가) 후 서버에 전달, 사용자 좌표 확인 후 ready로 상태 변경
+CAMERA_STATUS_READY = "ready"    # 이미지 캡쳐 및 후처리(반투명 mask 추가) 후 서버에 전달
+CAMERA_STATUS_RECORD = "record"  # 이미지 캡쳐 및 후처리(카운트 다운 및 녹화) 후 서버에 전달
 CAMERA_STATUS_DETECT = "detect"  # 이미지 캡쳐 및 좌표 추출 후 서버에 전달
 
 # WebSocket 연결 설정
