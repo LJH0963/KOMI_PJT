@@ -1,0 +1,1227 @@
+{
+  "frame_000.json": {
+    "left_hip_angle_diff": 5.09,
+    "right_hip_angle_diff": 3.59,
+    "left_knee_angle_diff": 0.65,
+    "right_knee_angle_diff": 2.41,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9999,
+    "failed_parts": []
+  },
+  "frame_001.json": {
+    "left_hip_angle_diff": 5.44,
+    "right_hip_angle_diff": 3.49,
+    "left_knee_angle_diff": 1.32,
+    "right_knee_angle_diff": 3.19,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9998,
+    "failed_parts": []
+  },
+  "frame_002.json": {
+    "left_hip_angle_diff": 5.41,
+    "right_hip_angle_diff": 3.49,
+    "left_knee_angle_diff": 1.32,
+    "right_knee_angle_diff": 2.51,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9998,
+    "failed_parts": []
+  },
+  "frame_003.json": {
+    "left_hip_angle_diff": 4.09,
+    "right_hip_angle_diff": 2.39,
+    "left_knee_angle_diff": 0.57,
+    "right_knee_angle_diff": 3.79,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9998,
+    "failed_parts": []
+  },
+  "frame_004.json": {
+    "left_hip_angle_diff": 5.03,
+    "right_hip_angle_diff": 5.15,
+    "left_knee_angle_diff": 0.74,
+    "right_knee_angle_diff": 0.23,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9999,
+    "failed_parts": []
+  },
+  "frame_005.json": {
+    "left_hip_angle_diff": 5.9,
+    "right_hip_angle_diff": 5.07,
+    "left_knee_angle_diff": 0.93,
+    "right_knee_angle_diff": 0.52,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9999,
+    "failed_parts": []
+  },
+  "frame_006.json": {
+    "left_hip_angle_diff": 6.85,
+    "right_hip_angle_diff": 5.72,
+    "left_knee_angle_diff": 1.94,
+    "right_knee_angle_diff": 2.14,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9999,
+    "failed_parts": []
+  },
+  "frame_007.json": {
+    "left_hip_angle_diff": 5.55,
+    "right_hip_angle_diff": 5.31,
+    "left_knee_angle_diff": 0.18,
+    "right_knee_angle_diff": 2.76,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9999,
+    "failed_parts": []
+  },
+  "frame_008.json": {
+    "left_hip_angle_diff": 6.22,
+    "right_hip_angle_diff": 6.81,
+    "left_knee_angle_diff": 1.29,
+    "right_knee_angle_diff": 4.98,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9999,
+    "failed_parts": []
+  },
+  "frame_009.json": {
+    "left_hip_angle_diff": 7.23,
+    "right_hip_angle_diff": 7.42,
+    "left_knee_angle_diff": 1.96,
+    "right_knee_angle_diff": 6.38,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9999,
+    "failed_parts": []
+  },
+  "frame_010.json": {
+    "left_hip_angle_diff": 7.93,
+    "right_hip_angle_diff": 8.03,
+    "left_knee_angle_diff": 2.54,
+    "right_knee_angle_diff": 6.89,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9999,
+    "failed_parts": []
+  },
+  "frame_011.json": {
+    "left_hip_angle_diff": 9.5,
+    "right_hip_angle_diff": 8.99,
+    "left_knee_angle_diff": 6.22,
+    "right_knee_angle_diff": 8.38,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 1.0,
+    "failed_parts": []
+  },
+  "frame_012.json": {
+    "left_hip_angle_diff": 8.93,
+    "right_hip_angle_diff": 8.16,
+    "left_knee_angle_diff": 5.03,
+    "right_knee_angle_diff": 7.69,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 1.0,
+    "failed_parts": []
+  },
+  "frame_013.json": {
+    "left_hip_angle_diff": 9.19,
+    "right_hip_angle_diff": 8.37,
+    "left_knee_angle_diff": 5.18,
+    "right_knee_angle_diff": 7.93,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 1.0,
+    "failed_parts": []
+  },
+  "frame_014.json": {
+    "left_hip_angle_diff": 10.64,
+    "right_hip_angle_diff": 9.78,
+    "left_knee_angle_diff": 6.12,
+    "right_knee_angle_diff": 9.88,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9999,
+    "failed_parts": []
+  },
+  "frame_015.json": {
+    "left_hip_angle_diff": 10.81,
+    "right_hip_angle_diff": 9.86,
+    "left_knee_angle_diff": 6.86,
+    "right_knee_angle_diff": 9.9,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 1.0,
+    "failed_parts": []
+  },
+  "frame_016.json": {
+    "left_hip_angle_diff": 12.02,
+    "right_hip_angle_diff": 9.33,
+    "left_knee_angle_diff": 7.5,
+    "right_knee_angle_diff": 10.33,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9999,
+    "failed_parts": []
+  },
+  "frame_017.json": {
+    "left_hip_angle_diff": 12.31,
+    "right_hip_angle_diff": 8.22,
+    "left_knee_angle_diff": 6.82,
+    "right_knee_angle_diff": 9.64,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9999,
+    "failed_parts": []
+  },
+  "frame_018.json": {
+    "left_hip_angle_diff": 13.52,
+    "right_hip_angle_diff": 8.36,
+    "left_knee_angle_diff": 8.58,
+    "right_knee_angle_diff": 10.37,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9999,
+    "failed_parts": []
+  },
+  "frame_019.json": {
+    "left_hip_angle_diff": 14.28,
+    "right_hip_angle_diff": 8.03,
+    "left_knee_angle_diff": 8.62,
+    "right_knee_angle_diff": 9.53,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9999,
+    "failed_parts": []
+  },
+  "frame_020.json": {
+    "left_hip_angle_diff": 15.18,
+    "right_hip_angle_diff": 11.11,
+    "left_knee_angle_diff": 12.22,
+    "right_knee_angle_diff": 13.29,
+    "pass_left_hip": 0,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 1.0,
+    "failed_parts": [
+      "left_hip"
+    ]
+  },
+  "frame_021.json": {
+    "left_hip_angle_diff": 17.19,
+    "right_hip_angle_diff": 12.22,
+    "left_knee_angle_diff": 15.36,
+    "right_knee_angle_diff": 14.36,
+    "pass_left_hip": 0,
+    "pass_right_hip": 1,
+    "pass_left_knee": 0,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9999,
+    "failed_parts": [
+      "left_hip",
+      "left_knee"
+    ]
+  },
+  "frame_022.json": {
+    "left_hip_angle_diff": 21.28,
+    "right_hip_angle_diff": 9.05,
+    "left_knee_angle_diff": 21.32,
+    "right_knee_angle_diff": 13.63,
+    "pass_left_hip": 0,
+    "pass_right_hip": 1,
+    "pass_left_knee": 0,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9995,
+    "failed_parts": [
+      "left_hip",
+      "left_knee"
+    ]
+  },
+  "frame_023.json": {
+    "left_hip_angle_diff": 20.21,
+    "right_hip_angle_diff": 10.33,
+    "left_knee_angle_diff": 20.26,
+    "right_knee_angle_diff": 15.46,
+    "pass_left_hip": 0,
+    "pass_right_hip": 1,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9997,
+    "failed_parts": [
+      "left_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_024.json": {
+    "left_hip_angle_diff": 18.31,
+    "right_hip_angle_diff": 11.33,
+    "left_knee_angle_diff": 17.0,
+    "right_knee_angle_diff": 17.15,
+    "pass_left_hip": 0,
+    "pass_right_hip": 1,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9999,
+    "failed_parts": [
+      "left_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_025.json": {
+    "left_hip_angle_diff": 20.56,
+    "right_hip_angle_diff": 11.28,
+    "left_knee_angle_diff": 18.66,
+    "right_knee_angle_diff": 15.27,
+    "pass_left_hip": 0,
+    "pass_right_hip": 1,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9998,
+    "failed_parts": [
+      "left_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_026.json": {
+    "left_hip_angle_diff": 19.57,
+    "right_hip_angle_diff": 11.86,
+    "left_knee_angle_diff": 16.88,
+    "right_knee_angle_diff": 16.68,
+    "pass_left_hip": 0,
+    "pass_right_hip": 1,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9999,
+    "failed_parts": [
+      "left_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_027.json": {
+    "left_hip_angle_diff": 16.25,
+    "right_hip_angle_diff": 11.37,
+    "left_knee_angle_diff": 14.7,
+    "right_knee_angle_diff": 15.9,
+    "pass_left_hip": 0,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9999,
+    "failed_parts": [
+      "left_hip",
+      "right_knee"
+    ]
+  },
+  "frame_028.json": {
+    "left_hip_angle_diff": 14.93,
+    "right_hip_angle_diff": 11.7,
+    "left_knee_angle_diff": 14.8,
+    "right_knee_angle_diff": 16.15,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 0,
+    "cosine_similarity": 1.0,
+    "failed_parts": [
+      "right_knee"
+    ]
+  },
+  "frame_029.json": {
+    "left_hip_angle_diff": 14.03,
+    "right_hip_angle_diff": 12.35,
+    "left_knee_angle_diff": 13.86,
+    "right_knee_angle_diff": 17.02,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 0,
+    "cosine_similarity": 1.0,
+    "failed_parts": [
+      "right_knee"
+    ]
+  },
+  "frame_030.json": {
+    "left_hip_angle_diff": 10.27,
+    "right_hip_angle_diff": 14.14,
+    "left_knee_angle_diff": 8.36,
+    "right_knee_angle_diff": 19.64,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9996,
+    "failed_parts": [
+      "right_knee"
+    ]
+  },
+  "frame_031.json": {
+    "left_hip_angle_diff": 11.71,
+    "right_hip_angle_diff": 17.08,
+    "left_knee_angle_diff": 11.35,
+    "right_knee_angle_diff": 22.52,
+    "pass_left_hip": 1,
+    "pass_right_hip": 0,
+    "pass_left_knee": 1,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9996,
+    "failed_parts": [
+      "right_hip",
+      "right_knee"
+    ]
+  },
+  "frame_032.json": {
+    "left_hip_angle_diff": 11.66,
+    "right_hip_angle_diff": 17.39,
+    "left_knee_angle_diff": 7.93,
+    "right_knee_angle_diff": 25.55,
+    "pass_left_hip": 1,
+    "pass_right_hip": 0,
+    "pass_left_knee": 1,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9991,
+    "failed_parts": [
+      "right_hip",
+      "right_knee"
+    ]
+  },
+  "frame_033.json": {
+    "left_hip_angle_diff": 13.3,
+    "right_hip_angle_diff": 16.21,
+    "left_knee_angle_diff": 10.73,
+    "right_knee_angle_diff": 23.88,
+    "pass_left_hip": 1,
+    "pass_right_hip": 0,
+    "pass_left_knee": 1,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9995,
+    "failed_parts": [
+      "right_hip",
+      "right_knee"
+    ]
+  },
+  "frame_034.json": {
+    "left_hip_angle_diff": 17.69,
+    "right_hip_angle_diff": 13.27,
+    "left_knee_angle_diff": 16.47,
+    "right_knee_angle_diff": 22.02,
+    "pass_left_hip": 0,
+    "pass_right_hip": 1,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9998,
+    "failed_parts": [
+      "left_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_035.json": {
+    "left_hip_angle_diff": 26.07,
+    "right_hip_angle_diff": 13.46,
+    "left_knee_angle_diff": 23.07,
+    "right_knee_angle_diff": 22.36,
+    "pass_left_hip": 0,
+    "pass_right_hip": 1,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9996,
+    "failed_parts": [
+      "left_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_036.json": {
+    "left_hip_angle_diff": 27.59,
+    "right_hip_angle_diff": 16.47,
+    "left_knee_angle_diff": 23.89,
+    "right_knee_angle_diff": 28.4,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9996,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_037.json": {
+    "left_hip_angle_diff": 20.1,
+    "right_hip_angle_diff": 21.88,
+    "left_knee_angle_diff": 19.31,
+    "right_knee_angle_diff": 34.35,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9994,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_038.json": {
+    "left_hip_angle_diff": 19.98,
+    "right_hip_angle_diff": 23.27,
+    "left_knee_angle_diff": 21.52,
+    "right_knee_angle_diff": 33.45,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9996,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_039.json": {
+    "left_hip_angle_diff": 19.57,
+    "right_hip_angle_diff": 23.14,
+    "left_knee_angle_diff": 20.77,
+    "right_knee_angle_diff": 32.46,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9996,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_040.json": {
+    "left_hip_angle_diff": 19.23,
+    "right_hip_angle_diff": 24.84,
+    "left_knee_angle_diff": 20.9,
+    "right_knee_angle_diff": 33.54,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9995,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_041.json": {
+    "left_hip_angle_diff": 23.36,
+    "right_hip_angle_diff": 26.04,
+    "left_knee_angle_diff": 24.34,
+    "right_knee_angle_diff": 34.85,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9997,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_042.json": {
+    "left_hip_angle_diff": 18.0,
+    "right_hip_angle_diff": 26.1,
+    "left_knee_angle_diff": 17.88,
+    "right_knee_angle_diff": 35.44,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9991,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_043.json": {
+    "left_hip_angle_diff": 23.82,
+    "right_hip_angle_diff": 28.5,
+    "left_knee_angle_diff": 23.56,
+    "right_knee_angle_diff": 35.05,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9996,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_044.json": {
+    "left_hip_angle_diff": 24.73,
+    "right_hip_angle_diff": 33.58,
+    "left_knee_angle_diff": 25.48,
+    "right_knee_angle_diff": 41.95,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9989,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_045.json": {
+    "left_hip_angle_diff": 34.51,
+    "right_hip_angle_diff": 34.4,
+    "left_knee_angle_diff": 35.42,
+    "right_knee_angle_diff": 39.36,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 1.0,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_046.json": {
+    "left_hip_angle_diff": 28.5,
+    "right_hip_angle_diff": 34.52,
+    "left_knee_angle_diff": 29.82,
+    "right_knee_angle_diff": 40.56,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9994,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_047.json": {
+    "left_hip_angle_diff": 35.25,
+    "right_hip_angle_diff": 45.99,
+    "left_knee_angle_diff": 35.77,
+    "right_knee_angle_diff": 53.22,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9986,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_048.json": {
+    "left_hip_angle_diff": 34.22,
+    "right_hip_angle_diff": 35.54,
+    "left_knee_angle_diff": 34.78,
+    "right_knee_angle_diff": 45.11,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9996,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_049.json": {
+    "left_hip_angle_diff": 25.63,
+    "right_hip_angle_diff": 30.14,
+    "left_knee_angle_diff": 27.59,
+    "right_knee_angle_diff": 39.12,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9993,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_050.json": {
+    "left_hip_angle_diff": 21.86,
+    "right_hip_angle_diff": 35.05,
+    "left_knee_angle_diff": 22.67,
+    "right_knee_angle_diff": 43.62,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9978,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_051.json": {
+    "left_hip_angle_diff": 15.45,
+    "right_hip_angle_diff": 17.36,
+    "left_knee_angle_diff": 14.92,
+    "right_knee_angle_diff": 25.04,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 1,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9995,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "right_knee"
+    ]
+  },
+  "frame_052.json": {
+    "left_hip_angle_diff": 35.2,
+    "right_hip_angle_diff": 33.27,
+    "left_knee_angle_diff": 36.38,
+    "right_knee_angle_diff": 39.0,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9999,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_053.json": {
+    "left_hip_angle_diff": 36.66,
+    "right_hip_angle_diff": 28.43,
+    "left_knee_angle_diff": 36.05,
+    "right_knee_angle_diff": 35.11,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9998,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_054.json": {
+    "left_hip_angle_diff": 24.94,
+    "right_hip_angle_diff": 22.33,
+    "left_knee_angle_diff": 24.95,
+    "right_knee_angle_diff": 27.06,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 1.0,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_055.json": {
+    "left_hip_angle_diff": 22.33,
+    "right_hip_angle_diff": 17.03,
+    "left_knee_angle_diff": 22.21,
+    "right_knee_angle_diff": 22.82,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9999,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_056.json": {
+    "left_hip_angle_diff": 22.86,
+    "right_hip_angle_diff": 16.75,
+    "left_knee_angle_diff": 22.63,
+    "right_knee_angle_diff": 22.0,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9999,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_057.json": {
+    "left_hip_angle_diff": 24.48,
+    "right_hip_angle_diff": 20.25,
+    "left_knee_angle_diff": 23.47,
+    "right_knee_angle_diff": 26.13,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9999,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_058.json": {
+    "left_hip_angle_diff": 21.46,
+    "right_hip_angle_diff": 19.76,
+    "left_knee_angle_diff": 18.2,
+    "right_knee_angle_diff": 25.53,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 0,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9999,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "left_knee",
+      "right_knee"
+    ]
+  },
+  "frame_059.json": {
+    "left_hip_angle_diff": 12.68,
+    "right_hip_angle_diff": 16.29,
+    "left_knee_angle_diff": 9.55,
+    "right_knee_angle_diff": 19.36,
+    "pass_left_hip": 1,
+    "pass_right_hip": 0,
+    "pass_left_knee": 1,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9997,
+    "failed_parts": [
+      "right_hip",
+      "right_knee"
+    ]
+  },
+  "frame_060.json": {
+    "left_hip_angle_diff": 15.14,
+    "right_hip_angle_diff": 15.64,
+    "left_knee_angle_diff": 9.21,
+    "right_knee_angle_diff": 20.96,
+    "pass_left_hip": 0,
+    "pass_right_hip": 0,
+    "pass_left_knee": 1,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9997,
+    "failed_parts": [
+      "left_hip",
+      "right_hip",
+      "right_knee"
+    ]
+  },
+  "frame_061.json": {
+    "left_hip_angle_diff": 17.08,
+    "right_hip_angle_diff": 8.7,
+    "left_knee_angle_diff": 7.46,
+    "right_knee_angle_diff": 12.92,
+    "pass_left_hip": 0,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9997,
+    "failed_parts": [
+      "left_hip"
+    ]
+  },
+  "frame_062.json": {
+    "left_hip_angle_diff": 14.41,
+    "right_hip_angle_diff": 13.09,
+    "left_knee_angle_diff": 7.14,
+    "right_knee_angle_diff": 15.46,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 0,
+    "cosine_similarity": 0.9998,
+    "failed_parts": [
+      "right_knee"
+    ]
+  },
+  "frame_063.json": {
+    "left_hip_angle_diff": 14.95,
+    "right_hip_angle_diff": 9.14,
+    "left_knee_angle_diff": 6.71,
+    "right_knee_angle_diff": 10.43,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9998,
+    "failed_parts": []
+  },
+  "frame_064.json": {
+    "left_hip_angle_diff": 16.66,
+    "right_hip_angle_diff": 6.62,
+    "left_knee_angle_diff": 7.72,
+    "right_knee_angle_diff": 12.59,
+    "pass_left_hip": 0,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9997,
+    "failed_parts": [
+      "left_hip"
+    ]
+  },
+  "frame_065.json": {
+    "left_hip_angle_diff": 15.88,
+    "right_hip_angle_diff": 5.4,
+    "left_knee_angle_diff": 4.96,
+    "right_knee_angle_diff": 11.97,
+    "pass_left_hip": 0,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9996,
+    "failed_parts": [
+      "left_hip"
+    ]
+  },
+  "frame_066.json": {
+    "left_hip_angle_diff": 14.46,
+    "right_hip_angle_diff": 5.55,
+    "left_knee_angle_diff": 5.73,
+    "right_knee_angle_diff": 10.03,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9998,
+    "failed_parts": []
+  },
+  "frame_067.json": {
+    "left_hip_angle_diff": 14.92,
+    "right_hip_angle_diff": 4.44,
+    "left_knee_angle_diff": 7.34,
+    "right_knee_angle_diff": 9.1,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9997,
+    "failed_parts": []
+  },
+  "frame_068.json": {
+    "left_hip_angle_diff": 14.91,
+    "right_hip_angle_diff": 4.37,
+    "left_knee_angle_diff": 5.78,
+    "right_knee_angle_diff": 7.87,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9997,
+    "failed_parts": []
+  },
+  "frame_069.json": {
+    "left_hip_angle_diff": 16.26,
+    "right_hip_angle_diff": 1.55,
+    "left_knee_angle_diff": 9.85,
+    "right_knee_angle_diff": 3.41,
+    "pass_left_hip": 0,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9994,
+    "failed_parts": [
+      "left_hip"
+    ]
+  },
+  "frame_070.json": {
+    "left_hip_angle_diff": 14.87,
+    "right_hip_angle_diff": 3.29,
+    "left_knee_angle_diff": 8.37,
+    "right_knee_angle_diff": 4.17,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9996,
+    "failed_parts": []
+  },
+  "frame_071.json": {
+    "left_hip_angle_diff": 12.72,
+    "right_hip_angle_diff": 3.17,
+    "left_knee_angle_diff": 6.44,
+    "right_knee_angle_diff": 3.08,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9997,
+    "failed_parts": []
+  },
+  "frame_072.json": {
+    "left_hip_angle_diff": 12.76,
+    "right_hip_angle_diff": 2.61,
+    "left_knee_angle_diff": 5.59,
+    "right_knee_angle_diff": 5.12,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9998,
+    "failed_parts": []
+  },
+  "frame_073.json": {
+    "left_hip_angle_diff": 13.42,
+    "right_hip_angle_diff": 1.85,
+    "left_knee_angle_diff": 5.86,
+    "right_knee_angle_diff": 4.08,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9997,
+    "failed_parts": []
+  },
+  "frame_074.json": {
+    "left_hip_angle_diff": 7.26,
+    "right_hip_angle_diff": 5.79,
+    "left_knee_angle_diff": 2.75,
+    "right_knee_angle_diff": 3.7,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9999,
+    "failed_parts": []
+  },
+  "frame_075.json": {
+    "left_hip_angle_diff": 7.47,
+    "right_hip_angle_diff": 5.32,
+    "left_knee_angle_diff": 2.68,
+    "right_knee_angle_diff": 3.12,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9999,
+    "failed_parts": []
+  },
+  "frame_076.json": {
+    "left_hip_angle_diff": 7.84,
+    "right_hip_angle_diff": 3.66,
+    "left_knee_angle_diff": 0.62,
+    "right_knee_angle_diff": 1.48,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9999,
+    "failed_parts": []
+  },
+  "frame_077.json": {
+    "left_hip_angle_diff": 6.56,
+    "right_hip_angle_diff": 5.75,
+    "left_knee_angle_diff": 0.76,
+    "right_knee_angle_diff": 2.02,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9999,
+    "failed_parts": []
+  },
+  "frame_078.json": {
+    "left_hip_angle_diff": 5.2,
+    "right_hip_angle_diff": 6.03,
+    "left_knee_angle_diff": 1.21,
+    "right_knee_angle_diff": 3.39,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9999,
+    "failed_parts": []
+  },
+  "frame_079.json": {
+    "left_hip_angle_diff": 3.84,
+    "right_hip_angle_diff": 4.88,
+    "left_knee_angle_diff": 3.96,
+    "right_knee_angle_diff": 2.19,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9998,
+    "failed_parts": []
+  },
+  "frame_080.json": {
+    "left_hip_angle_diff": 3.3,
+    "right_hip_angle_diff": 4.41,
+    "left_knee_angle_diff": 3.76,
+    "right_knee_angle_diff": 0.64,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9998,
+    "failed_parts": []
+  },
+  "frame_081.json": {
+    "left_hip_angle_diff": 5.43,
+    "right_hip_angle_diff": 4.01,
+    "left_knee_angle_diff": 1.79,
+    "right_knee_angle_diff": 0.45,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9999,
+    "failed_parts": []
+  },
+  "frame_082.json": {
+    "left_hip_angle_diff": 4.58,
+    "right_hip_angle_diff": 4.67,
+    "left_knee_angle_diff": 2.3,
+    "right_knee_angle_diff": 0.43,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9999,
+    "failed_parts": []
+  },
+  "frame_083.json": {
+    "left_hip_angle_diff": 3.63,
+    "right_hip_angle_diff": 4.36,
+    "left_knee_angle_diff": 3.65,
+    "right_knee_angle_diff": 0.81,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9998,
+    "failed_parts": []
+  },
+  "frame_084.json": {
+    "left_hip_angle_diff": 3.45,
+    "right_hip_angle_diff": 5.3,
+    "left_knee_angle_diff": 3.75,
+    "right_knee_angle_diff": 0.21,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9998,
+    "failed_parts": []
+  },
+  "frame_085.json": {
+    "left_hip_angle_diff": 4.0,
+    "right_hip_angle_diff": 6.29,
+    "left_knee_angle_diff": 3.09,
+    "right_knee_angle_diff": 0.72,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9998,
+    "failed_parts": []
+  },
+  "frame_086.json": {
+    "left_hip_angle_diff": 2.94,
+    "right_hip_angle_diff": 5.88,
+    "left_knee_angle_diff": 2.0,
+    "right_knee_angle_diff": 1.0,
+    "pass_left_hip": 1,
+    "pass_right_hip": 1,
+    "pass_left_knee": 1,
+    "pass_right_knee": 1,
+    "cosine_similarity": 0.9998,
+    "failed_parts": []
+  }
+}

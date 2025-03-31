@@ -23,6 +23,7 @@ image_output_folder = os.path.join(output_folder, 'image')
 json_output_folder = os.path.join(output_folder, 'json')
 os.makedirs(image_output_folder, exist_ok=True)
 os.makedirs(json_output_folder, exist_ok=True)
+mp4_output = os.path.join(output_folder, 'user_output_front.mp4')
 
 # 기준 pose json 로딩 함수
 def load_reference_pose(json_path):
@@ -231,3 +232,21 @@ for image_file in image_files:
     with open(json_output_path, 'w', encoding='utf-8') as jf:
         json.dump(json_data, jf, indent=4)
     print(f"YOLO-Pose 완료 및 JSON 저장: {json_output_path}")
+
+# FFmpeg로 H.264 인코딩된 MP4로 변환
+print("FFmpeg로 MP4(H.264)로 변환 중...")
+ffmpeg_command = f'ffmpeg -y -i "{video_path}" -vcodec libx264 -crf 23 "{mp4_output}"'
+os.system(ffmpeg_command)
+
+# 변환 성공 여부 확인
+if os.path.exists(mp4_output) and os.path.getsize(mp4_output) > 1000:
+    print("MP4(H.264) 영상 저장 완료:", mp4_output)
+
+    try :
+        os.remove(f'{video_path}')
+        print("임시 파일 삭제 완료")
+
+    except:
+        print("Error : Temp_file is not removed")
+else:
+    print("MP4 변환 실패 - FFmpeg 설치 또는 입력 확인 필요")
