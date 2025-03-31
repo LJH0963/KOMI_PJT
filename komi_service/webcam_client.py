@@ -29,6 +29,7 @@ pose_model = None  # YOLO 포즈 모델 인스턴스
 last_pose_detection_times = {}  # 카메라 ID -> 마지막 포즈 감지 시간
 camera_status = {}  # 카메라 ID -> 상태 ("off", "on", "ready", "record", "detect")
 video_recorders = {}  # 카메라 ID -> 비디오 레코더 객체
+record_start_time = None
 
 # 카메라 상태 정의
 CAMERA_STATUS_OFF = "off"        # 초기상태, 이미지 캡쳐가 진행되지 않음
@@ -881,10 +882,19 @@ def post_process_record(frame, camera_id=None, remaining=0):
 # 카메라 상태에 따른 프레임 처리 함수
 async def process_frame_by_status(camera_id, frame, timestamp, status, quality=85, max_width=640, flip=False):
     """카메라 상태에 따라 프레임 처리"""
-    global pose_model, video_recorders, last_pose_detection_times
+    global pose_model, video_recorders, last_pose_detection_times, record_start_time, camera_status
     
     result_frame = frame.copy()
     pose_data = None
+    
+    # 이전 상태와 현재 상태가 다르고, 현재 상태가 RECORD인 경우 시작 시간 초기화
+    prev_status = getattr(process_frame_by_status, 'prev_status', None)
+    if prev_status != status and status == CAMERA_STATUS_RECORD:
+        record_start_time = time.time()
+        print(f"카운트다운 및 녹화 시작: {record_start_time}")
+    
+    # 현재 상태 저장
+    process_frame_by_status.prev_status = status
     
     # 상태별 처리
     if status == CAMERA_STATUS_OFF:
@@ -901,9 +911,27 @@ async def process_frame_by_status(camera_id, frame, timestamp, status, quality=8
         result_frame = post_process_mask(result_frame, camera_id=camera_id)
     
     if status == CAMERA_STATUS_RECORD:
+        # 카운트다운 및 녹화 처리
+        now = time.time()
+        elapsed = now - record_start_time if record_start_time else 0
+        
+        if elapsed < 3.0:  # 카운트다운 3초
+            remaining = 3 - int(elapsed)
+            flip = False
+        elif elapsed < 5.9:  # 녹화 2.9초
+            remaining = 0 - (elapsed - 3)
+            flip = True
+        else:
+            # 녹화 종료 후 상태 변경
+            await set_camera_status(camera_id, CAMERA_STATUS_ON)
+            video_path, duration = stop_video_recording(camera_id)
+            if video_path and duration > 0:
+                asyncio.create_task(upload_video_to_server(camera_id, video_path, duration))
+            remaining = -3.0  # 녹화 종료 표시
+        
         # 후처리 수행
-        result_frame = post_process_record(result_frame, camera_id=camera_id, remaining=1)
-        flip = False
+        result_frame = post_process_record(result_frame, camera_id=camera_id, remaining=remaining)
+
     
     elif status == CAMERA_STATUS_DETECT:
         # 포즈 감지 수행
