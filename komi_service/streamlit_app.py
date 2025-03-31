@@ -28,7 +28,7 @@ if 'server_url' in st.query_params:
 # 스레드 안전 데이터 구조
 image_queues = {}  # 카메라별 이미지 큐
 is_running = True
-selected_cameras = []
+thread_camera_list = []  # 백그라운드 스레드용 카메라 목록 (세션 상태 접근 없이 사용)
 
 # 서버 시간 동기화 관련 변수
 server_time_offset = 0.0  # 서버와의 시간차 (초 단위)
@@ -71,6 +71,10 @@ if 'sync_status' not in st.session_state:
     st.session_state.sync_status = "준비 중..."
 if 'connection_status' not in st.session_state:
     st.session_state.connection_status = {}
+if 'is_monitoring' not in st.session_state:
+    st.session_state.is_monitoring = False
+if 'need_thread_restart' not in st.session_state:
+    st.session_state.need_thread_restart = False
 # 페이지 관리를 위한 상태 변수
 if 'page' not in st.session_state:
     st.session_state.page = "exercise_select_page"
@@ -128,6 +132,37 @@ def run_async(coroutine):
     loop = get_event_loop()
     return loop.run_until_complete(coroutine)
 
+# 백그라운드 스레드에서 비동기 루프 실행
+def run_async_loop():
+    """비동기 루프를 실행하는 스레드 함수"""
+    # 이 스레드 전용 이벤트 루프 생성
+    loop = get_event_loop()
+    
+    try:
+        # 스레드 시작 로그
+        print("카메라 스트리밍 스레드 시작")
+        
+        # 이미지 업데이트 태스크 생성
+        task = loop.create_task(update_images())
+        
+        # 이벤트 루프 실행
+        loop.run_until_complete(task)
+    except Exception as e:
+        print(f"비동기 루프 오류: {str(e)}")
+    finally:
+        print("카메라 스트리밍 스레드 종료 중...")
+        # 모든 태스크 취소
+        for task in asyncio.all_tasks(loop):
+            task.cancel()
+        
+        # 취소된 태스크 완료 대기
+        if asyncio.all_tasks(loop):
+            loop.run_until_complete(asyncio.gather(*asyncio.all_tasks(loop), return_exceptions=True))
+        
+        # 루프 중지
+        loop.stop()
+        print("카메라 스트리밍 스레드 종료 완료")
+
 # 비동기 카메라 목록 가져오기
 async def async_get_cameras():
     """비동기적으로 카메라 목록 가져오기"""
@@ -166,6 +201,34 @@ def get_cameras():
     st.session_state.camera_statuses = camera_statuses
     return cameras
 
+# 카메라 상태 변경하기
+async def async_set_camera_status(camera_id, status):
+    """비동기적으로 카메라 상태 변경하기"""
+    try:
+        session = await init_session()
+        request_timeout = aiohttp.ClientTimeout(total=2)
+        # POST 요청으로 카메라 상태 변경
+        async with session.post(
+            f"{API_URL}/cameras/{camera_id}/status", 
+            json={"status": status},
+            timeout=request_timeout
+        ) as response:
+            if response.status == 200:
+                data = await response.json()
+                print(f"카메라 {camera_id} 상태 '{status}'로 변경 요청")
+                return data
+            else:
+                print(f"카메라 상태 변경 실패: {response.status}")
+                return None
+    except Exception as e:
+        print(f"카메라 상태 변경 오류: {str(e)}")
+        return None
+
+# 카메라 상태 변경 (동기 래퍼)
+def set_camera_status(camera_id, status):
+    """카메라 상태 변경 (동기 래퍼)"""
+    return run_async(async_set_camera_status(camera_id, status))
+
 # 스레드에서 이미지 디코딩 처리
 def process_image_in_thread(image_data):
     """별도 스레드에서 이미지 처리"""
@@ -191,19 +254,22 @@ def init_sync_buffer(camera_ids):
 # 동기화된 프레임 쌍 찾기
 def find_synchronized_frames():
     """여러 카메라에서 타임스탬프가 가장 가까운 프레임 쌍 찾기"""
-    global sync_buffer
+    global sync_buffer, thread_camera_list
     
-    if len(st.session_state.selected_cameras) < 2:
+    # 전역 변수에서 카메라 목록 가져오기
+    camera_ids = thread_camera_list
+    
+    if len(camera_ids) < 2:
         return None
     
     if not all(camera_id in sync_buffer and len(sync_buffer[camera_id]) > 0 
-               for camera_id in st.session_state.selected_cameras):
+               for camera_id in camera_ids):
         return None
     
     # 가장 최근의 타임스탬프 기준으로 시작
     latest_frame_times = {
         camera_id: max([frame["time"] for frame in sync_buffer[camera_id]])
-        for camera_id in st.session_state.selected_cameras
+        for camera_id in camera_ids
     }
     
     # 가장 늦은 타임스탬프 찾기
@@ -211,7 +277,7 @@ def find_synchronized_frames():
     
     # 각 카메라에서 기준 시간과 가장 가까운 프레임 찾기
     best_frames = {}
-    for camera_id in st.session_state.selected_cameras:
+    for camera_id in camera_ids:
         closest_frame = min(
             [frame for frame in sync_buffer[camera_id]],
             key=lambda x: abs((x["time"] - reference_time).total_seconds())
@@ -225,7 +291,7 @@ def find_synchronized_frames():
             return None
     
     # 모든 카메라에 대해 프레임을 찾았는지 확인
-    if len(best_frames) == len(st.session_state.selected_cameras):
+    if len(best_frames) == len(camera_ids):
         # 동기화 상태 업데이트
         max_diff = max([abs((f["time"] - reference_time).total_seconds() * 1000) 
                         for f in best_frames.values()])
@@ -303,7 +369,7 @@ def update_connection_status(camera_id, status):
 # 비동기 이미지 업데이트 함수
 async def update_images():
     """백그라운드에서 이미지를 가져오는 함수 (WebSocket 기반)"""
-    global selected_cameras, is_running, last_time_sync
+    global is_running, last_time_sync, thread_camera_list
     
     # 세션 초기화
     await init_session()
@@ -320,8 +386,8 @@ async def update_images():
             if time.time() - last_time_sync >= TIME_SYNC_INTERVAL:
                 await sync_server_time()
             
-            # 전역 변수로 카메라 ID 목록 확인
-            camera_ids = selected_cameras
+            # 세션 상태 대신 전역 변수 사용
+            camera_ids = thread_camera_list
             
             if camera_ids:
                 # 동기화 버퍼 초기화
@@ -349,9 +415,9 @@ async def update_images():
     except asyncio.CancelledError:
         # 정상적인 취소, 조용히 처리
         pass
-    except Exception:
+    except Exception as e:
         # 다른 예외, 조용히 처리
-        pass
+        print(f"이미지 업데이트 루프 오류: {str(e)}")
     finally:
         # 모든 스트림 태스크 취소
         for task in stream_tasks.values():
@@ -361,32 +427,6 @@ async def update_images():
         # 사용했던 세션 정리
         await close_session()
 
-# 백그라운드 스레드에서 비동기 루프 실행
-def run_async_loop():
-    """비동기 루프를 실행하는 스레드 함수"""
-    # 이 스레드 전용 이벤트 루프 생성
-    loop = get_event_loop()
-    
-    try:
-        # 이미지 업데이트 태스크 생성
-        task = loop.create_task(update_images())
-        
-        # 이벤트 루프 실행
-        loop.run_until_complete(task)
-    except Exception as e:
-        print(f"비동기 루프 오류: {str(e)}")
-    finally:
-        # 모든 태스크 취소
-        for task in asyncio.all_tasks(loop):
-            task.cancel()
-        
-        # 취소된 태스크 완료 대기
-        if asyncio.all_tasks(loop):
-            loop.run_until_complete(asyncio.gather(*asyncio.all_tasks(loop), return_exceptions=True))
-        
-        # 루프 중지
-        loop.stop()
-
 # WebSocket 연결 및 이미지 스트리밍 수신 - 안정성 개선
 async def connect_to_camera_stream(camera_id):
     """WebSocket을 통해 카메라 스트림에 연결"""
@@ -394,6 +434,7 @@ async def connect_to_camera_stream(camera_id):
     
     # 연결 상태 업데이트
     update_connection_status(camera_id, "reconnecting")
+    print(f"카메라 {camera_id} - 연결 시도 중...")
     
     # 최대 재연결 시도 횟수 확인
     if camera_id in connection_attempts and connection_attempts[camera_id] >= MAX_RECONNECT_ATTEMPTS:
@@ -416,7 +457,7 @@ async def connect_to_camera_stream(camera_id):
         ws_timeout = aiohttp.ClientWSTimeout(ws_close=60.0)  # WebSocket 종료 대기 시간 60초
         
         async with session.ws_connect(
-            ws_url, 
+            ws_url,
             heartbeat=heartbeat,
             timeout=ws_timeout,
             max_msg_size=0,  # 무제한
@@ -425,6 +466,7 @@ async def connect_to_camera_stream(camera_id):
             # 연결 성공 - 상태 업데이트 및 시도 횟수 초기화
             update_connection_status(camera_id, "connected")
             connection_attempts[camera_id] = 0
+            print(f"카메라 {camera_id} - 연결 성공")
             
             last_ping_time = time.time()
             ping_interval = 25  # 25초마다 핑 전송 (30초 하트비트보다 짧게)
@@ -438,6 +480,7 @@ async def connect_to_camera_stream(camera_id):
                         last_ping_time = current_time
                     except:
                         # 핑 실패 시 루프 탈출하여 재연결
+                        print(f"카메라 {camera_id} - 핑 실패, 재연결 시도")
                         break
                 
                 # 데이터 수신 (짧은 타임아웃으로 반응성 유지)
@@ -445,8 +488,10 @@ async def connect_to_camera_stream(camera_id):
                     msg = await asyncio.wait_for(ws.receive(), timeout=0.1)
                     
                     if msg.type == aiohttp.WSMsgType.CLOSED:
+                        print(f"카메라 {camera_id} - 연결 닫힘")
                         break
                     elif msg.type == aiohttp.WSMsgType.ERROR:
+                        print(f"카메라 {camera_id} - 연결 오류")
                         break
                     elif msg.type == aiohttp.WSMsgType.TEXT:
                         # 핑/퐁 처리
@@ -502,12 +547,15 @@ async def connect_to_camera_stream(camera_id):
                     pass
     except asyncio.TimeoutError:
         # 연결 타임아웃
+        print(f"카메라 {camera_id} - 연결 타임아웃")
         update_connection_status(camera_id, "disconnected")
     except aiohttp.ClientConnectorError:
         # 서버 연결 실패
+        print(f"카메라 {camera_id} - 서버 연결 실패")
         update_connection_status(camera_id, "disconnected")
-    except Exception:
+    except Exception as e:
         # 기타 예외
+        print(f"카메라 {camera_id} - 연결 오류: {str(e)}")
         update_connection_status(camera_id, "disconnected")
     
     # 함수 종료시 연결 해제 상태로 설정
@@ -522,40 +570,44 @@ async def connect_to_camera_stream(camera_id):
 # record
 def monitor_cameras(active_cameras):
     """활성화된 카메라를 모니터링하는 함수"""
-    global selected_cameras, is_running
+    global is_running, thread_camera_list
+    print(f"활성화된 카메라: {active_cameras}")
+    
+    # 모니터링 상태 활성화
+    st.session_state.is_monitoring = True
     
     # 운동 정보 표시
     if "exercise_id" in st.session_state and st.session_state.exercise_id:
         exercise = get_exercise_detail(st.session_state.exercise_id)
         if exercise:
             st.text(f"{exercise['name']} 실시간 모니터링")
-            # st.text(exercise["description"])
-    else:
-        st.title("카메라 스트리밍")
     
     # 활성화된 카메라 자동 선택 (최대 2대)
     max_cameras = min(2, len(active_cameras))
     selected = active_cameras[:max_cameras]
     
-    # 선택된 카메라 업데이트
-    if selected != st.session_state.selected_cameras:
-        st.session_state.selected_cameras = selected
-        selected_cameras = selected
-        # 카메라 선택 변경 시 동기화 버퍼 초기화
-        init_sync_buffer(selected)
+    # 선택된 카메라 업데이트 및 전역 변수에 동기화
+    st.session_state.selected_cameras = selected
+    # 전역 변수 업데이트 (백그라운드 스레드와 공유)
+    thread_camera_list.clear()
+    thread_camera_list.extend(selected)
+    # 디버깅
+    print(f"선택된 카메라: {selected}, 스레드용 카메라: {thread_camera_list}")
+    # 카메라 선택 변경 시 동기화 버퍼 초기화
+    init_sync_buffer(selected)
     
     # 동기화는 항상 활성화
     use_sync = True
     
     # 두 개의 열로 이미지 배치
-    if st.session_state.selected_cameras:
-        cols = st.columns(min(2, len(st.session_state.selected_cameras)))
+    if selected:
+        cols = st.columns(min(2, len(selected)))
         image_slots = {}
         status_slots = {}
         connection_indicators = {}
         
         # 각 카메라별 이미지 슬롯 생성
-        for i, camera_id in enumerate(st.session_state.selected_cameras[:2]):
+        for i, camera_id in enumerate(selected[:2]):
             with cols[i]:
                 header_col1, header_col2 = st.columns([4, 1])
                 with header_col1:
@@ -568,20 +620,31 @@ def monitor_cameras(active_cameras):
                 status_slots[camera_id] = st.empty()
                 status_slots[camera_id].text("실시간 스트리밍 준비 중...")
     
-    # 별도 스레드 시작 (단 한번만)
-    if 'thread_started' not in st.session_state:
+    # 스레드 시작 또는 재시작 로직
+    if 'thread_started' not in st.session_state or st.session_state.need_thread_restart:
+        # 기존 스레드가 있으면 종료를 위한 플래그 설정
+        is_running = False
+        # 잠시 대기하여 기존 스레드가 종료되도록 함
+        time.sleep(0.3)
+        # 새로운 스레드 실행을 위한 상태 초기화
+        is_running = True
+        # 스레드 시작
         thread = threading.Thread(target=run_async_loop, daemon=True)
         thread.start()
+        # 스레드 시작 상태 및 재시작 필요 플래그 업데이트
         st.session_state.thread_started = True
+        st.session_state.need_thread_restart = False
+        print("카메라 스트리밍 스레드 (재)시작됨")
     
     # 메인 UI 업데이트 루프
     try:
         update_interval = 0
-        while True:
+        # 무한 루프 대신 모니터링 상태가 활성화되어 있는 동안에만 루프 실행
+        while st.session_state.is_monitoring:
             update_interval += 1
             update_ui = False
             
-            if use_sync and len(st.session_state.selected_cameras) > 1:
+            if use_sync and len(selected) > 1:
                 # 동기화된 프레임 찾기
                 sync_frames = find_synchronized_frames()
                 if sync_frames:
@@ -592,7 +655,7 @@ def monitor_cameras(active_cameras):
                     update_ui = True
             else:
                 # 동기화 없이 각 카메라의 최신 프레임 사용
-                for camera_id in st.session_state.selected_cameras[:2]:
+                for camera_id in selected[:2]:
                     if camera_id in image_queues and not image_queues[camera_id].empty():
                         try:
                             img_data = image_queues[camera_id].get(block=False)
@@ -604,24 +667,55 @@ def monitor_cameras(active_cameras):
             
             # 이미지 업데이트
             if update_ui:
-                for camera_id in st.session_state.selected_cameras[:2]:
+                for camera_id in selected[:2]:
                     if camera_id in st.session_state.camera_images:
                         img = st.session_state.camera_images[camera_id]
-                        if img is not None:
-                            image_slots[camera_id].image(img, use_container_width=True)
-                            status_time = st.session_state.image_update_time[camera_id].strftime('%H:%M:%S.%f')[:-3]
-                            status_slots[camera_id].text(f"업데이트: {status_time}")
+                        if img is not None and camera_id in image_slots:
+                            try:
+                                image_slots[camera_id].image(img, use_container_width=True)
+                                status_time = st.session_state.image_update_time[camera_id].strftime('%H:%M:%S.%f')[:-3]
+                                status_slots[camera_id].text(f"업데이트: {status_time}")
+                            except Exception as ui_error:
+                                print(f"UI 업데이트 오류: {ui_error}")
+                                # UI 오류 발생 시 모니터링 중단
+                                st.session_state.is_monitoring = False
+                                break
             
             # UI 업데이트 간격 (더 빠른 응답성)
             time.sleep(0.05)
     except Exception as e:
         # 오류 표시 개선
-        st.error(f"오류가 발생했습니다. 페이지를 새로 고침해주세요.")
+        st.error(f"오류가 발생했습니다. 페이지를 새로 고침해주세요: {str(e)}")
+    finally:
+        # 함수 종료 시 모니터링 상태 비활성화
+        st.session_state.is_monitoring = False
 
 # 페이지 관리 함수
 def set_page(page_name, **kwargs):
     """페이지 상태 설정 및 저장"""
+    global thread_camera_list
+    
+    old_page = st.session_state.page if 'page' in st.session_state else None
+    
+    # # 페이지 전환 감지 및 모니터링 상태 관리
+    # if old_page != page_name:
+    #     # 모니터링 페이지에서 다른 페이지로 이동할 때
+    #     if old_page == "posture_analysis_page":
+    #         # 모니터링 중단 설정
+    #         st.session_state.is_monitoring = False
+    #         # 백그라운드 스레드용 카메라 목록 초기화
+    #         thread_camera_list.clear()
+    #         print(f"페이지 전환 감지: {old_page} -> {page_name}, 모니터링 중단")
+        
+    #     # 정밀 분석 페이지로 이동할 때 스레드 재시작 플래그 설정
+    #     if page_name == "posture_analysis_page":
+    #         st.session_state.need_thread_restart = True
+    #         print(f"페이지 전환 감지: {old_page} -> {page_name}, 스레드 재시작 필요")
+    
     if st.session_state.page != page_name or kwargs:  # 이전 페이지와 다른 경우에만 변경
+        st.session_state.need_thread_restart = True
+        print(f"페이지 전환 감지: {old_page} -> {page_name}, 스레드 재시작 필요")
+        
         st.session_state.page = page_name
         for key, value in kwargs.items():
             st.session_state[key] = value
@@ -770,22 +864,32 @@ def exercise_guide_page():
 
 def posture_analysis_page():
     """자세 정밀 분석 페이지"""
+    global thread_camera_list
+    st.session_state.cameras = get_cameras()
     
     # 네비게이션 버튼    
     col1, col2 = st.columns(2)
     with col1:
         if st.button("운동 가이드로 돌아가기"):
+        # if st.button("운동 가이드로 돌아가기", key="analysis_back_btn"):
+            # # 모니터링 상태 비활성화 후 페이지 전환
+            # st.session_state.is_monitoring = False
+            # thread_camera_list.clear()  # 전역 변수 초기화
             set_page("exercise_guide_page")
     with col2:
-        if st.button("결과 보기"):
+        if st.button("결과 보기", key="view_result_btn"):
+        # if st.button("결과 보기", key="view_result_btn"):
+            # # 모니터링 상태 비활성화 후 페이지 전환
+            # st.session_state.is_monitoring = False
+            # thread_camera_list.clear()  # 전역 변수 초기화
             set_page("analysis_result_page")
             
     st.title("자세 정밀 분석")
     # 카메라 목록이 없으면 표시 후 종료
     if not st.session_state.cameras:
         st.info("연결된 카메라가 없습니다")
-        if st.button("새로고침"):
-            st.session_state.cameras = get_cameras()
+        if st.button("새로고침", key="refresh_camera_btn1"):
+            # st.session_state.cameras = get_cameras()
             st.rerun()
         return
     
@@ -800,10 +904,25 @@ def posture_analysis_page():
     # 활성화된 카메라가 없으면 메시지 표시
     if not active_cameras:
         st.warning("활성화된 카메라가 없습니다. 모든 카메라가 'off' 상태입니다.")
-        if st.button("새로고침"):
+        if st.button("새로고침", key="refresh_camera_btn2"):
             st.session_state.cameras = get_cameras()
             st.rerun()
         return
+    
+    # 활성화된 카메라들의 상태를 "mask"로 변경
+    for camera_id in active_cameras:
+        result = set_camera_status(camera_id, "mask")
+        if result:
+            st.session_state.camera_statuses[camera_id] = "mask"
+    
+    # 페이지 로드 시 모니터링 상태 활성화 표시
+    st.session_state.is_monitoring = True
+    
+    # 페이지 로드 시 전역 변수 초기화
+    thread_camera_list.clear()
+    
+    # 페이지 진입 시 스레드 재시작 설정
+    st.session_state.need_thread_restart = True
     
     # 활성화된 카메라가 있으면 모니터링 함수 호출
     monitor_cameras(active_cameras)
@@ -843,7 +962,7 @@ def exercise_feedback_page():
     
 
 def main():
-    global selected_cameras, is_running
+    global is_running
     
     # 서버 상태 확인
     if st.session_state.server_status is None:
@@ -879,6 +998,8 @@ if __name__ == "__main__":
     finally:
         # 종료 플래그 설정
         is_running = False
+        # 카메라 목록 초기화
+        thread_camera_list = []
         time.sleep(0.5)
         
         # 스레드 풀 종료

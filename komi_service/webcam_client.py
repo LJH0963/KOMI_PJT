@@ -10,6 +10,7 @@ import os
 import signal
 from datetime import datetime, timedelta
 import random
+import numpy as np
 
 from pose_detection import YoloPoseModel
 
@@ -31,8 +32,9 @@ video_recorders = {}  # 카메라 ID -> 비디오 레코더 객체
 # 카메라 상태 정의
 CAMERA_STATUS_OFF = "off"        # 초기상태, 이미지 캡쳐가 진행되지 않음
 CAMERA_STATUS_ON = "on"          # 이미지 캡쳐가 진행되어 서버에 전달
-CAMERA_STATUS_READY = "ready"    # 이미지 캡쳐 및 후처리(개발 예정) 후 서버에 전달
-CAMERA_STATUS_RECORD = "record"  # 이미지 캡쳐 및 후처리(개발 예정) 후 서버에 전달, 웹캠 화면을 비디오로 저장
+CAMERA_STATUS_MASK = "mask"      # 이미지 캡쳐 및 후처리(반투명 mask 추가) 후 서버에 전달, 사용자 좌표 확인 후 ready로 상태 변경
+CAMERA_STATUS_READY = "ready"    # 이미지 캡쳐 및 후처리(반투명 mask 추가) 후 서버에 전달
+CAMERA_STATUS_RECORD = "record"  # 이미지 캡쳐 및 후처리(카운트 다운 및 녹화) 후 서버에 전달
 CAMERA_STATUS_DETECT = "detect"  # 이미지 캡쳐 및 좌표 추출 후 서버에 전달
 
 # WebSocket 연결 설정
@@ -709,12 +711,36 @@ async def send_recording_info(camera_id, video_id, video_path, duration):
         print(f"녹화 정보 전송 오류: {str(e)}")
         return False
 
+# 마스크 오버레이 함수 (반투명 적용)
+def overlay_mask(frame, mask, alpha_value=100):
+    mask_resized = cv2.resize(mask, (frame.shape[1], frame.shape[0]))
+    if mask_resized.shape[2] == 3:  # RGB
+        mask_rgb = mask_resized
+        mask_alpha = np.ones((mask_resized.shape[0], mask_resized.shape[1]), dtype=np.uint8) * 255
+    else:  # RGBA
+        mask_rgb = mask_resized[:, :, :3]
+        mask_alpha = mask_resized[:, :, 3]
+    object_mask = (mask_alpha > 0).astype(np.uint8)
+    custom_alpha = np.full_like(mask_alpha, alpha_value, dtype=np.uint8)
+    custom_alpha[object_mask == 0] = 0
+    frame_rgba = cv2.cvtColor(frame, cv2.COLOR_BGR2BGRA)
+    for c in range(3):
+        frame_rgba[:, :, c] = (
+            frame_rgba[:, :, c] * (1 - custom_alpha / 255.0) +
+            mask_rgb[:, :, c] * (custom_alpha / 255.0)
+        ).astype(np.uint8)
+    frame_rgba[:, :, 3] = np.maximum(frame_rgba[:, :, 3], custom_alpha)
+    return cv2.cvtColor(frame_rgba, cv2.COLOR_BGRA2BGR)
+
 # 프레임 후처리 함수
-def post_process_frame(frame, mode="ready"):
+def post_process_frame(frame, mode="on"):
     """프레임 후처리 (상태에 따라 다른 처리)"""
-    # 실제 후처리가 필요한 경우 여기에 코드 구현
-    # 현재는 원본 프레임을 그대로 반환
-    return frame
+    if mode == "mask":
+        mask_image_path = 'data/squat/test.png'
+        mask = cv2.imread(mask_image_path, cv2.IMREAD_UNCHANGED)
+        return overlay_mask(frame, mask)
+    elif mode == "ready":
+        return frame
 
 # 카메라 상태에 따른 프레임 처리 함수
 async def process_frame_by_status(camera_id, frame, timestamp, status, quality=85, max_width=640, flip=False):
@@ -725,9 +751,13 @@ async def process_frame_by_status(camera_id, frame, timestamp, status, quality=8
     pose_data = None
     
     # 상태별 처리
-    if status == CAMERA_STATUS_OFF:
+    if status in [CAMERA_STATUS_OFF, CAMERA_STATUS_ON]:
         # 프레임 처리 안함
         return False
+    
+    if status == CAMERA_STATUS_MASK:
+        result_frame = post_process_frame(result_frame, "mask")
+        
     
     elif status in [CAMERA_STATUS_ON, CAMERA_STATUS_READY]:
         if status == CAMERA_STATUS_READY:
@@ -776,8 +806,8 @@ def main():
     
     # 인자 파서 설정
     parser = argparse.ArgumentParser(description="KOMI 웹캠 클라이언트")
-    parser.add_argument('--cameras', type=str, required=True, 
-                        help='카메라 설정 (형식: "카메라ID:인덱스,카메라ID:인덱스,...")')
+    parser.add_argument('--camera', type=str, required=True, 
+                        help='카메라 설정 (형식: "카메라ID:인덱스")')
     parser.add_argument('--server', type=str, default="http://localhost:8000",
                         help='서버 URL (기본값: http://localhost:8000)')
     parser.add_argument('--quality', type=int, default=85,
@@ -816,39 +846,32 @@ def main():
     signal.signal(signal.SIGTERM, handle_exit)
     
     # 카메라 설정 파싱
-    camera_configs = {}
-    
-    for cam_config in args.cameras.split(','):
-        cam_parts = cam_config.strip().split(':')
-        if len(cam_parts) == 2:
-            camera_id, camera_index = cam_parts
-            try:
-                camera_configs[camera_id] = int(camera_index)
-            except ValueError:
-                print(f"잘못된 카메라 인덱스: {camera_index}")
-    
-    if not camera_configs:
-        print("사용 가능한 카메라 없음")
+    cam_parts = args.camera.strip().split(':')
+    if len(cam_parts) != 2:
+        print("잘못된 카메라 설정 형식. 'ID:인덱스' 형식으로 입력하세요.")
         return
     
-    print(f"카메라 설정: {camera_configs}")
+    camera_id, camera_index = cam_parts
+    try:
+        camera_index = int(camera_index)
+    except ValueError:
+        print(f"잘못된 카메라 인덱스: {camera_index}")
+        return
+    
+    print(f"카메라 설정: {camera_id}:{camera_index}")
     
     # 카메라 스레드 시작
-    threads = []
-    for camera_id, camera_index in camera_configs.items():
-        # 카메라별 스레드 생성
-        thread = threading.Thread(
-            target=run_camera_thread,
-            args=(camera_id, camera_index, args.fps, quality, max_width, FLIP_HORIZONTAL),
-            daemon=True
-        )
-        thread.start()
-        threads.append(thread)
-        print(f"카메라 {camera_id} 스레드 시작됨")
+    thread = threading.Thread(
+        target=run_camera_thread,
+        args=(camera_id, camera_index, args.fps, quality, max_width, FLIP_HORIZONTAL),
+        daemon=True
+    )
+    thread.start()
+    print(f"카메라 {camera_id} 스레드 시작됨")
     
     # 메인 스레드 유지
     try:
-        while running and any(t.is_alive() for t in threads):
+        while running and thread.is_alive():
             time.sleep(0.5)
     except KeyboardInterrupt:
         print("키보드 인터럽트 감지")
@@ -857,20 +880,17 @@ def main():
     # 종료 처리
     print("종료 중...")
     
-    # 모든 스레드가 종료될 때까지 대기
-    for thread in threads:
-        thread.join(timeout=5.0)
+    # 스레드가 종료될 때까지 대기
+    thread.join(timeout=5.0)
     
     # 남아있는 연결 확인 및 종료
-    remaining_connections = list(ws_connections.keys())
-    if remaining_connections:
-        print(f"남은 연결 정리 중: {remaining_connections}")
+    if camera_id in ws_connections:
+        print(f"남은 연결 정리 중: {camera_id}")
         # 메인 스레드에서 비동기 종료 작업 실행
-        for camera_id in remaining_connections:
-            try:
-                asyncio.run(close_camera_connection(camera_id))
-            except Exception as e:
-                print(f"최종 정리 중 오류: {str(e)}")
+        try:
+            asyncio.run(close_camera_connection(camera_id))
+        except Exception as e:
+            print(f"최종 정리 중 오류: {str(e)}")
     
     print("프로그램 종료")
 
