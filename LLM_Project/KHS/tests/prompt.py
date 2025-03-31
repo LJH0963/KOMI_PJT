@@ -56,19 +56,40 @@ def generate_summary_prompt(input_path: str) -> str:
 
     # 위에서 구한 관절별 오류 통계를 바탕으로 LLM에 보낼 자연어 프롬프트 생성
     part_names = {
+        # Front view
         "left_hip_angle_diff": "왼쪽 고관절",
         "right_hip_angle_diff": "오른쪽 고관절",
         "left_knee_angle_diff": "왼쪽 무릎",
-        "right_knee_angle_diff": "오른쪽 무릎"
+        "right_knee_angle_diff": "오른쪽 무릎",
+
+        # Side view
+        "left_shoulder_angle_diff": "왼쪽 어깨",
+        "left_hip_angle_diff": "왼쪽 고관절",
+        "left_knee_angle_diff": "왼쪽 무릎",
     }
 
     # 관절별 잘못된 횟수를 텍스트로 나열
-    lines = [f"- {part_names.get(j, j)}: {c}회" for j, c in joint_counter.items()]
+    front_lines = []
+    side_lines = []
+
+    for joint, count in joint_counter.items():
+        name = part_names.get(joint, joint)
+        line = f"- {name}: {count}회"
+        if "angle" in joint and ("left" in joint or "right" in joint):
+            front_lines.append(line)
+        else:
+            side_lines.append(line)
 
     # 최종 LLM용 프롬프트 생성
-    prompt = (
-        "운동 영상에서 다음 부위에 자주 문제가 발생했습니다:\n"
-        f"{chr(10).join(lines)}\n\n"
-        "이러한 문제가 왜 발생할 수 있는지, 그리고 어떻게 개선하면 좋을지 운동 전문가 입장에서 설명해 주세요."
+    prompt = "운동 영상에서 다음 부위에 자주 문제가 발생했습니다:\n"
+
+    if front_lines:
+        prompt += "\n[정면 View 기준 문제 부위]\n" + "\n".join(front_lines)
+    if side_lines:
+        prompt += "\n\n[측면 View 기준 문제 부위]\n" + "\n".join(side_lines)
+
+    prompt += (
+        "\n\n이러한 문제가 왜 발생할 수 있는지, 그리고 어떻게 개선하면 좋을지 "
+        "운동 전문가 입장에서 설명해 주세요."
     )
     return prompt
