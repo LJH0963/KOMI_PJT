@@ -714,12 +714,14 @@ async def send_recording_info(camera_id, video_id, video_path, duration):
 # 마스크 오버레이 함수 (반투명 적용)
 def overlay_mask(frame, mask, alpha_value=100):
     mask_resized = cv2.resize(mask, (frame.shape[1], frame.shape[0]))
-    if mask_resized.shape[2] == 3:  # RGB
-        mask_rgb = mask_resized
-        mask_alpha = np.ones((mask_resized.shape[0], mask_resized.shape[1]), dtype=np.uint8) * 255
-    else:  # RGBA
-        mask_rgb = mask_resized[:, :, :3]
-        mask_alpha = mask_resized[:, :, 3]
+    # if mask_resized.shape[2] == 3:  # RGB
+    #     mask_rgb = mask_resized
+    #     mask_alpha = np.ones((mask_resized.shape[0], mask_resized.shape[1]), dtype=np.uint8) * 255
+    # else:  # RGBA
+    #     mask_rgb = mask_resized[:, :, :3]
+    #     mask_alpha = mask_resized[:, :, 3]
+    mask_rgb = mask_resized[:, :, :3]
+    mask_alpha = mask_resized[:, :, 3]
     object_mask = (mask_alpha > 0).astype(np.uint8)
     custom_alpha = np.full_like(mask_alpha, alpha_value, dtype=np.uint8)
     custom_alpha[object_mask == 0] = 0
@@ -733,10 +735,10 @@ def overlay_mask(frame, mask, alpha_value=100):
     return cv2.cvtColor(frame_rgba, cv2.COLOR_BGRA2BGR)
 
 # 프레임 후처리 함수
-def post_process_frame(frame, mode="on"):
+def post_process_frame(frame, mode="on", camera_id=None):
     """프레임 후처리 (상태에 따라 다른 처리)"""
     if mode == "mask":
-        mask_image_path = 'data/squat/test.png'
+        mask_image_path = f'data/squat/{camera_id}_frame_000_mask.png'
         mask = cv2.imread(mask_image_path, cv2.IMREAD_UNCHANGED)
         return overlay_mask(frame, mask)
     elif mode == "ready":
@@ -756,7 +758,7 @@ async def process_frame_by_status(camera_id, frame, timestamp, status, quality=8
         return False
     
     if status == CAMERA_STATUS_MASK:
-        result_frame = post_process_frame(result_frame, "mask")
+        result_frame = post_process_frame(result_frame, "mask", camera_id=camera_id)
         
     
     elif status in [CAMERA_STATUS_ON, CAMERA_STATUS_READY]:
