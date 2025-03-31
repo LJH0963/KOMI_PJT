@@ -60,7 +60,7 @@ yolo_model = YOLO("yolo11x-pose.pt")
 
 # 기준 마스크 이미지 및 keypoint 로딩
 ## Trouble shooting : RGBA 형식이어야 해서 png로 꿀뷰를 사용해 변환함
-mask_image_path = 'C:/Users/user/Desktop/img_output/squat/mask/frame_000_mask.png'
+mask_image_path = 'C:/Users/user/Desktop/img_output/squat/mask/side_frame_000_mask.png'
 mask = cv2.imread(mask_image_path, cv2.IMREAD_UNCHANGED)
 print("mask shape:", mask.shape)
 if mask is None:
@@ -71,6 +71,9 @@ reference_pose = load_reference_pose("C:/WANTED/LLM/KOMI_PJT/LLM_Project/LJH/dat
 # 마스크 오버레이 함수 (반투명 적용)
 def overlay_mask(frame, mask, alpha_value=100):
     mask_resized = cv2.resize(mask, (frame.shape[1], frame.shape[0]))
+    
+    # 마스크 반전 적용(왼쪽 위주로 찍히게끔)
+    mask_resized = cv2.flip(mask_resized, 1)
     mask_rgb = mask_resized[:, :, :3].astype(np.uint8)
     mask_alpha = mask_resized[:, :, 3].astype(np.uint8)
     object_mask = (mask_alpha > 0).astype(np.uint8)
