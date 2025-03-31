@@ -15,7 +15,7 @@ os.makedirs(output_dir, exist_ok=True)  # 출력 폴더 생성
 # 디바이스 설정
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# YOLOv8 모델 로드
+# YOLO11 모델 로드
 model = YOLO('yolo11x.pt')
 
 # SAM 모델 로드
