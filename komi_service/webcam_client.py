@@ -11,9 +11,10 @@ import signal
 from datetime import datetime, timedelta
 import random
 import numpy as np
-
+from ultralytics import YOLO
 from pose_detection import YoloPoseModel
 
+yolo_model = YOLO("yolo11x-pose.pt")
 # 스레드별 전용 세션과 이벤트 루프
 thread_local = threading.local()
 
@@ -48,6 +49,25 @@ POSE_DETECTION_INTERVAL = 1.0  # 포즈 감지 간격 (초)
 VIDEO_OUTPUT_DIR = "video_webcam"
 VIDEO_FPS = 15
 VIDEO_FORMAT = ".mp4"
+
+
+def load_reference_pose(json_path):
+    """기준 포즈 JSON을 로드하는 함수"""
+    with open(json_path, 'r') as f:
+        data = json.load(f)
+    keypoints = []
+    for kp in data['keypoints']:
+        if kp["x"] is not None and kp["y"] is not None:
+            keypoints.append([kp["x"], kp["y"]])
+        else:
+            keypoints.append([None, None])
+    return np.array(keypoints, dtype=np.float32)
+
+REFERENCE_POSE = {
+    "front": load_reference_pose('data/squat/front_json/frame_000.json'),
+    "side": load_reference_pose('data/squat/side_json/frame_000.json'),
+}
+
 
 # 서버 시간 동기화 함수
 async def sync_server_time():
@@ -155,6 +175,46 @@ def init_camera(camera_index, fps=15):
     except Exception as e:
         print(f"카메라 초기화 오류: {str(e)}")
         return None
+
+# 카메라 상태 변경 함수
+async def set_camera_status(camera_id, new_status):
+    """
+    서버에 카메라 상태 변경을 요청하는 함수
+    
+    Args:
+        camera_id (str): 카메라 ID
+        new_status (str): 새로운 상태 (off, on, mask, ready, record, detect)
+    
+    Returns:
+        bool: 성공 여부
+    """
+    global camera_status
+    
+    try:
+        # 세션 초기화
+        session = await init_session()
+        
+        # 서버에 상태 변경 요청
+        async with session.post(
+            f"{api_url}/cameras/{camera_id}/status",
+            json={"status": new_status}
+        ) as response:
+            if response.status == 200:
+                # 서버 응답 확인
+                result = await response.json()
+                
+                # 로컬 상태 업데이트
+                camera_status[camera_id] = new_status
+                print(f"카메라 {camera_id} 상태 변경 요청 성공: {new_status}")
+                return True
+            else:
+                error_text = await response.text()
+                print(f"카메라 {camera_id} 상태 변경 요청 실패 (상태 코드: {response.status}): {error_text}")
+                return False
+                
+    except Exception as e:
+        print(f"카메라 {camera_id} 상태 변경 요청 중 오류: {str(e)}")
+        return False
 
 # 이미지 인코딩 함수
 def encode_image(frame, quality=85, max_width=640, flip=False, verbose=False):
@@ -734,15 +794,89 @@ def overlay_mask(frame, mask, alpha_value=100):
     frame_rgba[:, :, 3] = np.maximum(frame_rgba[:, :, 3], custom_alpha)
     return cv2.cvtColor(frame_rgba, cv2.COLOR_BGRA2BGR)
 
+# 카운트다운 오버레이 함수
+def overlay_countdown(frame, remaining):
+    """카운트다운 숫자를 프레임에 오버레이하고 수정된 프레임을 반환합니다"""
+    # 좌우 반전 적용
+    frame = cv2.flip(frame, 1)
+    
+    # 프레임 크기 가져오기
+    height, width = frame.shape[:2]
+    # 텍스트 크기 계산
+    text = str(remaining)
+    text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 5, 10)[0]
+    # 중앙 상단에 위치하도록 좌표 계산
+    text_x = (width - text_size[0]) // 2
+    text_y = text_size[1] + 50  # 상단에서 약간 여백 추가
+    # 텍스트 그리기
+    result_frame = cv2.putText(frame, text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 5, (0, 0, 255), 10)
+    return result_frame
+
+
+def is_pose_similar_by_accuracy(current_pose, camera_id, threshold_px=20, ratio=0.7):
+    """정확도 기반 포즈 유사성 판단 함수"""
+    reference_pose = REFERENCE_POSE[camera_id]
+    if current_pose is None or reference_pose is None:
+        return False
+    match_count = 0
+    total_count = 0
+    for i in range(len(reference_pose)):
+        ref = reference_pose[i]
+        cur = current_pose[i]
+        if ref[0] is not None and cur[0] is not None:
+            dist = np.linalg.norm(np.array(ref) - np.array(cur))
+            total_count += 1
+            if dist <= threshold_px:
+                match_count += 1
+    if total_count == 0:
+        return False
+    return (match_count / total_count) >= ratio
+
+
+def check_pose_alignment(frame, yolo_model, camera_id):
+    """포즈 정렬 확인 함수"""
+    # 프레임에서 포즈 감지
+    results = yolo_model.predict(source=frame, stream=False, verbose=False)
+    keypoints = None
+    
+    # 감지된 키포인트 추출
+    for result in results:
+        if result.keypoints is not None:
+            keypoints_np = result.keypoints.xy.cpu().numpy()
+            keypoints = keypoints_np[0]
+            break
+    
+    # 키포인트가 감지되었으면 유사도 확인
+    if keypoints is not None:
+        keypoints_array = np.array(keypoints, dtype=np.float32)
+        return is_pose_similar_by_accuracy(keypoints_array, camera_id)  # 기준 포즈와 유사한지 확인하여 결과 반환
+
+    return False
+
+
 # 프레임 후처리 함수
-def post_process_frame(frame, mode="on", camera_id=None):
+def post_process_mask(frame, camera_id=None):
     """프레임 후처리 (상태에 따라 다른 처리)"""
-    if mode == "mask":
-        mask_image_path = f'data/squat/{camera_id}_frame_000_mask.png'
-        mask = cv2.imread(mask_image_path, cv2.IMREAD_UNCHANGED)
-        return overlay_mask(frame, mask)
-    elif mode == "ready":
-        return frame
+    mask_image_path = f'data/squat/{camera_id}_frame_000_mask.png'
+    mask = cv2.imread(mask_image_path, cv2.IMREAD_UNCHANGED)
+    return overlay_mask(frame, mask)
+
+
+def post_process_record(frame, camera_id=None, remaining=0):
+    """프레임 후처리 (상태에 따라 다른 처리)"""
+    if remaining > 0:
+        return overlay_countdown(frame, remaining)
+    elif remaining > -2.9:
+        # 녹화 상태 처리
+        if camera_id not in video_recorders or not video_recorders.get(camera_id, {}).get("writer"):
+            # 녹화 중이 아니면 녹화 시작
+            height, width = frame.shape[:2]
+            start_video_recording(camera_id, width, height)
+        
+        # 비디오에 프레임 저장
+        if camera_id in video_recorders and video_recorders[camera_id].get("writer"):
+            video_recorders[camera_id]["writer"].write(frame)
+    return frame
 
 # 카메라 상태에 따른 프레임 처리 함수
 async def process_frame_by_status(camera_id, frame, timestamp, status, quality=85, max_width=640, flip=False):
@@ -758,28 +892,18 @@ async def process_frame_by_status(camera_id, frame, timestamp, status, quality=8
         return False
     
     if status == CAMERA_STATUS_MASK:
-        result_frame = post_process_frame(result_frame, "mask", camera_id=camera_id)
+        if check_pose_alignment(result_frame, yolo_model, camera_id=camera_id):
+            await set_camera_status(camera_id, CAMERA_STATUS_READY)
+        await set_camera_status(camera_id, CAMERA_STATUS_READY)  # for test
+        result_frame = post_process_mask(result_frame, camera_id=camera_id)
+
     if status == CAMERA_STATUS_READY:
-        # READY 상태에서는 후처리 수행
-        result_frame = post_process_frame(result_frame, "ready")
+        result_frame = post_process_mask(result_frame, camera_id=camera_id)
     
-    elif status == CAMERA_STATUS_RECORD:
-        # 녹화 상태 처리
-        if camera_id not in video_recorders or not video_recorders.get(camera_id, {}).get("writer"):
-            # 녹화 중이 아니면 녹화 시작
-            height, width = frame.shape[:2]
-            start_video_recording(camera_id, width, height)
-        
+    if status == CAMERA_STATUS_RECORD:
         # 후처리 수행
-        result_frame = post_process_frame(result_frame, "ready")
-        
-        # 비디오에 프레임 저장
-        if camera_id in video_recorders and video_recorders[camera_id].get("writer"):
-            # 녹화할 프레임을 좌우 반전 처리 (필요한 경우)
-            record_frame = result_frame
-            if flip:
-                record_frame = cv2.flip(record_frame, 1)
-            video_recorders[camera_id]["writer"].write(record_frame)
+        result_frame = post_process_record(result_frame, camera_id=camera_id, remaining=1)
+        flip = False
     
     elif status == CAMERA_STATUS_DETECT:
         # 포즈 감지 수행
