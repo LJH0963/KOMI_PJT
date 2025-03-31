@@ -843,8 +843,8 @@ def is_pose_similar_by_accuracy(
     if cnt_tmp_test % 30 == 0:
         # print("ref:\n", reference_pose)
         # print("cur:\n", current_pose)
-        # print(datetime.now())
         print(match_count / total_count)
+        print(datetime.now())
     return (match_count / total_count) >= ratio
 
 
