@@ -155,7 +155,8 @@ def init_camera(camera_index, fps=15):
     try:
         # 카메라 객체 생성
         camera = cv2.VideoCapture(camera_index)
-        
+        camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         # FPS 설정
         if fps:
             camera.set(cv2.CAP_PROP_FPS, fps)
@@ -813,8 +814,13 @@ def overlay_countdown(frame, remaining):
     result_frame = cv2.putText(frame, text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 5, (0, 0, 255), 10)
     return result_frame
 
-
-def is_pose_similar_by_accuracy(current_pose, camera_id, threshold_px=20, ratio=0.7):
+cnt_tmp_test = 0
+def is_pose_similar_by_accuracy(
+    current_pose,
+    camera_id,
+    threshold_px=20,
+    ratio=0.7
+):
     """정확도 기반 포즈 유사성 판단 함수"""
     reference_pose = REFERENCE_POSE[camera_id]
     if current_pose is None or reference_pose is None:
@@ -826,11 +832,19 @@ def is_pose_similar_by_accuracy(current_pose, camera_id, threshold_px=20, ratio=
         cur = current_pose[i]
         if ref[0] is not None and cur[0] is not None:
             dist = np.linalg.norm(np.array(ref) - np.array(cur))
+            # print(dist)
             total_count += 1
             if dist <= threshold_px:
                 match_count += 1
     if total_count == 0:
         return False
+    global cnt_tmp_test
+    cnt_tmp_test += 1
+    if cnt_tmp_test % 30 == 0:
+        # print("ref:\n", reference_pose)
+        # print("cur:\n", current_pose)
+        # print(datetime.now())
+        print(match_count / total_count)
     return (match_count / total_count) >= ratio
 
 
