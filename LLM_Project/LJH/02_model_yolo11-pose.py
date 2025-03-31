@@ -4,6 +4,7 @@ from tkinter import filedialog
 import os
 from ultralytics import YOLO
 import json
+import numpy
 
 # TKinter의 GUI 숨기기
 root = tk.Tk()
@@ -92,14 +93,14 @@ for image_path in image_paths:
     for result in results:
         # 박스 정보
         if result.boxes is not None:
-            bboxes = result.boxes.xyxy.cpu().numpy
-            confs = result.boxes.conf.cpu().numpy
-            classes = result.boxes.cls.cpu().numpy
+            bboxes = result.boxes.xyxy.cpu().numpy()
+            confs = result.boxes.conf.cpu().numpy()
+            classes = result.boxes.cls.cpu().numpy()
 
             # json에 아예 저장 먼저
             for bbox,conf,cls in zip(bboxes,confs,classes):
                 x1, y1, x2, y2 = map(int, bbox)        ## xmin, ymin, xmax, ymax
-                json_data['bboxes'].append({
+                json_data['bbox'].append({
                     'class': int(cls),
                     'bbox' : [x1, y1, x2, y2],
                     'confidence' : float(conf)
@@ -107,7 +108,7 @@ for image_path in image_paths:
 
                 # Bbox 시각화
                 cv2.rectangle(image, (x1, y1), (x2,y2), (255,0, 0), 2)
-                cv2.putText(image, f"conf: {conf:.2f}", (x1, y1, -10), cv2.FONT_HERSHEY_COMPLEX, 0.5, (255, 0, 0), 2)
+                cv2.putText(image, f"conf: {conf:.2f}", (x1, y1-10), cv2.FONT_HERSHEY_COMPLEX, 0.5, (255, 0, 0), 2)
         
         # Keypoint 정보
         keypoints = result.keypoints.xy.cpu().numpy()  # 좌표 변환
