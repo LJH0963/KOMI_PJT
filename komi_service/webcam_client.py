@@ -753,18 +753,15 @@ async def process_frame_by_status(camera_id, frame, timestamp, status, quality=8
     pose_data = None
     
     # 상태별 처리
-    if status in [CAMERA_STATUS_OFF, CAMERA_STATUS_ON]:
+    if status == CAMERA_STATUS_OFF:
         # 프레임 처리 안함
         return False
     
     if status == CAMERA_STATUS_MASK:
         result_frame = post_process_frame(result_frame, "mask", camera_id=camera_id)
-        
-    
-    elif status in [CAMERA_STATUS_ON, CAMERA_STATUS_READY]:
-        if status == CAMERA_STATUS_READY:
-            # READY 상태에서는 후처리 수행
-            result_frame = post_process_frame(result_frame, "ready")
+    if status == CAMERA_STATUS_READY:
+        # READY 상태에서는 후처리 수행
+        result_frame = post_process_frame(result_frame, "ready")
     
     elif status == CAMERA_STATUS_RECORD:
         # 녹화 상태 처리
