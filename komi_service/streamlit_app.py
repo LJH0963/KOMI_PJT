@@ -760,6 +760,86 @@ def get_exercise_detail(exercise_id):
     return run_async(async_get_exercise_detail(exercise_id))
 
 
+def play_guide_video(exercise):
+    # 영상 URL 확인
+    front_video = exercise["guide_videos"].get("front")
+    side_video = exercise["guide_videos"].get("side")
+    
+    if front_video and side_video:
+        # HTML 컴포넌트로 두 영상 동기화 재생
+        front_url = f"{API_URL}/data/{front_video}"
+        side_url = f"{API_URL}/data/{side_video}"
+        
+        # HTML과 JavaScript로 동기화된 비디오 재생
+        html_code = f"""
+        <div style="display: flex; justify-content: space-between; width: 100%;">
+            <div style="width: 48%;">
+                <h3 style="color: var(--text-color, #ffffff);">전면 영상</h3>
+                <video id="frontVideo" width="100%" controls autoplay muted loop>
+                    <source src="{front_url}" type="video/mp4">
+                </video>
+            </div>
+            <div style="width: 48%;">
+                <h3 style="color: var(--text-color, #ffffff);">측면 영상</h3>
+                <video id="sideVideo" width="100%" controls autoplay muted loop>
+                    <source src="{side_url}" type="video/mp4">
+                </video>
+            </div>
+        </div>
+        <script>
+            // 두 비디오 요소 가져오기
+            const frontVideo = document.getElementById('frontVideo');
+            const sideVideo = document.getElementById('sideVideo');
+            
+            // 비디오 반복 시 동기화
+            frontVideo.addEventListener('ended', function() {{
+                frontVideo.currentTime = 0;
+                sideVideo.currentTime = 0;
+                frontVideo.play();
+                sideVideo.play();
+            }});
+            
+            // 페이지 로드 시 영상 동시 시작
+            document.addEventListener('DOMContentLoaded', function() {{
+                frontVideo.currentTime = 0;
+                sideVideo.currentTime = 0;
+                frontVideo.play();
+                sideVideo.play();
+            }});
+        </script>
+        """
+        
+        # HTML 컴포넌트 렌더링
+        import streamlit.components.v1 as components
+        components.html(html_code, height=400)
+    
+    else:
+        # 기존 방식으로 가능한 영상 표시
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("전면 영상")
+            if front_video:
+                try:
+                    video_url_front = f"{API_URL}/data/{front_video}"
+                    st.video(video_url_front, start_time=0, autoplay=True)
+                except Exception as e:
+                    st.error(f"전면 영상을 불러올 수 없습니다: {str(e)}")
+            else:
+                st.info("전면 영상이 없습니다.")
+        
+        with col2:
+            st.subheader("측면 영상")
+            if side_video:
+                try:
+                    video_url_side = f"{API_URL}/data/{side_video}"
+                    st.video(video_url_side, start_time=0, autoplay=True)
+                except Exception as e:
+                    st.error(f"측면 영상을 불러올 수 없습니다: {str(e)}")
+            else:
+                st.info("측면 영상이 없습니다.")
+
+
 # 운동 선택 페이지
 def exercise_select_page():
     """메인 페이지 - 운동 선택 화면"""
@@ -829,35 +909,8 @@ def exercise_guide_page():
     # 가이드 영상 표시
     if "guide_videos" in exercise:
         st.subheader("가이드 영상")
-        
-        # 2열 레이아웃
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("전면 영상")
-            if "front" in exercise["guide_videos"]:
-                try:
-                    front_video = exercise["guide_videos"]["front"]
-                    video_url = f"{API_URL}/data{front_video}"
-                    # st.video 사용하여 자동 반복 재생 설정
-                    st.video(video_url, start_time=0, autoplay=True, loop=True)
-                except Exception as e:
-                    st.error(f"전면 영상을 불러올 수 없습니다: {str(e)}")
-            else:
-                st.info("전면 영상이 없습니다.")
-        
-        with col2:
-            st.subheader("측면 영상")
-            if "side" in exercise["guide_videos"]:
-                try:
-                    side_video = exercise["guide_videos"]["side"]
-                    video_url = f"{API_URL}/data{side_video}"
-                    # st.video 사용하여 자동 반복 재생 설정
-                    st.video(video_url, start_time=0, autoplay=True, loop=True)
-                except Exception as e:
-                    st.error(f"측면 영상을 불러올 수 없습니다: {str(e)}")
-            else:
-                st.info("측면 영상이 없습니다.")
+        play_guide_video(exercise)
+
     else:
         st.info("이 운동에는 가이드 영상이 없습니다.")
 
@@ -941,7 +994,28 @@ def analysis_result_page():
             set_page("exercise_feedback_page")
             
     st.title("분석 결과")
-    st.text("개발 예정")
+    
+    # 운동 상세 정보 가져오기
+    exercise_id = st.session_state.exercise_id
+    exercise = get_exercise_detail(exercise_id)
+    
+    if not exercise:
+        st.error("운동 정보를 가져오는데 실패했습니다.")
+        if st.button("운동 선택으로 돌아가기"):
+            set_page("exercise_select_page")
+        return
+    
+    # 헤더 표시
+    st.title(f"{exercise['name']} 가이드")
+    st.text(exercise["description"])
+    
+    # 가이드 영상 표시
+    if "guide_videos" in exercise:
+        st.subheader("가이드 영상")
+        play_guide_video(exercise)
+
+    else:
+        st.info("이 운동에는 가이드 영상이 없습니다.")
     
             
             

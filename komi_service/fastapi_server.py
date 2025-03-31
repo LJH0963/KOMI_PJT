@@ -16,7 +16,7 @@ import mimetypes
 mimetypes.add_type("video/mp4", ".mp4")
 
 # 영상 저장 경로 설정
-VIDEO_STORAGE_PATH = os.environ.get("VIDEO_STORAGE_PATH", "./video")
+VIDEO_STORAGE_PATH = os.environ.get("VIDEO_STORAGE_PATH", "./video_uploads")
 
 # 데이터 디렉토리 설정
 DATA_DIRECTORY = os.environ.get("DATA_DIRECTORY", "./data")
@@ -99,10 +99,11 @@ if not os.path.exists(DATA_DIRECTORY):
 # 비디오 저장 디렉토리 생성 (없는 경우)
 if not os.path.exists(VIDEO_STORAGE_PATH):
     os.makedirs(VIDEO_STORAGE_PATH, exist_ok=True)
-    os.makedirs(os.path.join(VIDEO_STORAGE_PATH, "uploads"), exist_ok=True)
+    # os.makedirs(os.path.join(VIDEO_STORAGE_PATH, "uploads"), exist_ok=True)
 
 # 정적 파일 서빙 설정
 app.mount("/data", StaticFiles(directory=DATA_DIRECTORY), name="data")
+app.mount("/uploads", StaticFiles(directory=DATA_DIRECTORY), name="data")
 
 # 헬스 체크 엔드포인트
 @app.get("/health")
@@ -705,7 +706,8 @@ async def get_camera_status(camera_id: str):
 @app.get("/uploaded_videos/{video_id}")
 async def get_uploaded_video(video_id: str):
     """사용자가 업로드한 영상을 스트리밍하여 제공"""
-    video_path = os.path.join(VIDEO_STORAGE_PATH, "uploads", f"{video_id}.mp4")
+    # video_path = os.path.join(VIDEO_STORAGE_PATH, "uploads", f"{video_id}.mp4")
+    video_path = os.path.join(VIDEO_STORAGE_PATH, f"{video_id}.mp4")
     
     if not os.path.exists(video_path):
         raise HTTPException(status_code=404, detail="업로드된 영상을 찾을 수 없습니다")
@@ -726,7 +728,8 @@ async def upload_exercise_video(
 ):
     """운동 영상 업로드 및 분석 요청"""
     # 업로드 디렉토리 생성
-    upload_dir = os.path.join(VIDEO_STORAGE_PATH, "uploads")
+    # upload_dir = os.path.join(VIDEO_STORAGE_PATH, "uploads")
+    upload_dir = VIDEO_STORAGE_PATH
     os.makedirs(upload_dir, exist_ok=True)
     
     # 파일 ID 생성 (카메라 ID가 있으면 사용)
@@ -832,7 +835,8 @@ async def get_camera_recordings(camera_id: str):
 async def stream_recording(camera_id: str, video_id: str):
     """카메라의 녹화 비디오 스트리밍"""
     # 업로드된 비디오 경로 생성
-    video_path = os.path.join(VIDEO_STORAGE_PATH, "uploads", f"{video_id}.mp4")
+    # video_path = os.path.join(VIDEO_STORAGE_PATH, "uploads", f"{video_id}.mp4")
+    video_path = os.path.join(VIDEO_STORAGE_PATH, f"{video_id}.mp4")
     
     if not os.path.exists(video_path):
         raise HTTPException(status_code=404, detail="녹화 비디오를 찾을 수 없습니다")
