@@ -8,7 +8,7 @@ from segment_anything import sam_model_registry, SamPredictor
 from tkinter import filedialog
 
 # 입력 및 출력 디렉토리 설정
-input_dir = "C:/Users/user/Desktop/img_output/squat/side/for_upload"  # 입력 이미지 폴더
+input_dir = "C:/Users/user/Desktop/img_output/squat/front"  # 입력 이미지 폴더
 output_dir = "C:/Users/user/Desktop/img_output/squat/mask"  # 세그멘테이션 결과 저장 폴더
 os.makedirs(output_dir, exist_ok=True)  # 출력 폴더 생성
 
