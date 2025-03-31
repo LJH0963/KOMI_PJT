@@ -215,7 +215,7 @@ async def async_set_camera_status(camera_id, status):
         ) as response:
             if response.status == 200:
                 data = await response.json()
-                print(f"카메라 {camera_id} 상태가 '{status}'로 변경됨")
+                print(f"카메라 {camera_id} 상태 '{status}'로 변경 요청")
                 return data
             else:
                 print(f"카메라 상태 변경 실패: {response.status}")
@@ -457,7 +457,7 @@ async def connect_to_camera_stream(camera_id):
         ws_timeout = aiohttp.ClientWSTimeout(ws_close=60.0)  # WebSocket 종료 대기 시간 60초
         
         async with session.ws_connect(
-            ws_url, 
+            ws_url,
             heartbeat=heartbeat,
             timeout=ws_timeout,
             max_msg_size=0,  # 무제한
@@ -697,22 +697,25 @@ def set_page(page_name, **kwargs):
     
     old_page = st.session_state.page if 'page' in st.session_state else None
     
-    # 페이지 전환 감지 및 모니터링 상태 관리
-    if old_page != page_name:
-        # 모니터링 페이지에서 다른 페이지로 이동할 때
-        if old_page == "posture_analysis_page":
-            # 모니터링 중단 설정
-            st.session_state.is_monitoring = False
-            # 백그라운드 스레드용 카메라 목록 초기화
-            thread_camera_list.clear()
-            print(f"페이지 전환 감지: {old_page} -> {page_name}, 모니터링 중단")
+    # # 페이지 전환 감지 및 모니터링 상태 관리
+    # if old_page != page_name:
+    #     # 모니터링 페이지에서 다른 페이지로 이동할 때
+    #     if old_page == "posture_analysis_page":
+    #         # 모니터링 중단 설정
+    #         st.session_state.is_monitoring = False
+    #         # 백그라운드 스레드용 카메라 목록 초기화
+    #         thread_camera_list.clear()
+    #         print(f"페이지 전환 감지: {old_page} -> {page_name}, 모니터링 중단")
         
-        # 정밀 분석 페이지로 이동할 때 스레드 재시작 플래그 설정
-        if page_name == "posture_analysis_page":
-            st.session_state.need_thread_restart = True
-            print(f"페이지 전환 감지: {old_page} -> {page_name}, 스레드 재시작 필요")
+    #     # 정밀 분석 페이지로 이동할 때 스레드 재시작 플래그 설정
+    #     if page_name == "posture_analysis_page":
+    #         st.session_state.need_thread_restart = True
+    #         print(f"페이지 전환 감지: {old_page} -> {page_name}, 스레드 재시작 필요")
     
     if st.session_state.page != page_name or kwargs:  # 이전 페이지와 다른 경우에만 변경
+        st.session_state.need_thread_restart = True
+        print(f"페이지 전환 감지: {old_page} -> {page_name}, 스레드 재시작 필요")
+        
         st.session_state.page = page_name
         for key, value in kwargs.items():
             st.session_state[key] = value
@@ -867,16 +870,18 @@ def posture_analysis_page():
     # 네비게이션 버튼    
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("운동 가이드로 돌아가기", key="analysis_back_btn"):
-            # 모니터링 상태 비활성화 후 페이지 전환
-            st.session_state.is_monitoring = False
-            thread_camera_list.clear()  # 전역 변수 초기화
+        if st.button("운동 가이드로 돌아가기"):
+        # if st.button("운동 가이드로 돌아가기", key="analysis_back_btn"):
+            # # 모니터링 상태 비활성화 후 페이지 전환
+            # st.session_state.is_monitoring = False
+            # thread_camera_list.clear()  # 전역 변수 초기화
             set_page("exercise_guide_page")
     with col2:
         if st.button("결과 보기", key="view_result_btn"):
-            # 모니터링 상태 비활성화 후 페이지 전환
-            st.session_state.is_monitoring = False
-            thread_camera_list.clear()  # 전역 변수 초기화
+        # if st.button("결과 보기", key="view_result_btn"):
+            # # 모니터링 상태 비활성화 후 페이지 전환
+            # st.session_state.is_monitoring = False
+            # thread_camera_list.clear()  # 전역 변수 초기화
             set_page("analysis_result_page")
             
     st.title("자세 정밀 분석")
