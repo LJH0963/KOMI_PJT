@@ -81,6 +81,6 @@ def evaluate_pose_front_by_angles_json(answer_dir, target_dir, output_json_path)
 
 if __name__ == "__main__":
     answer_dir = "C:/Users/user/Desktop/img_output/squat/side_json/for_compare"
-    target_dir = "C:/Users/user/Desktop/img_output/squat/web/new/front_json"
-    output_json_path = "C:/WANTED/LLM/KOMI_PJT/LLM_Project/LJH/output_json/front_pose_angle_eval.json"
+    target_dir = "C:/Users/user/Desktop/img_output/squat/web/new/side_json"
+    output_json_path = "C:/WANTED/LLM/KOMI_PJT/LLM_Project/LJH/output_json/sidepose_angle_eval.json"
     evaluate_pose_front_by_angles_json(answer_dir, target_dir, output_json_path)
