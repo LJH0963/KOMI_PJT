@@ -823,7 +823,7 @@ def is_pose_similar_by_accuracy(
 ):
     """정확도 기반 포즈 유사성 판단 함수"""
     reference_pose = REFERENCE_POSE[camera_id]
-    if current_pose is None or reference_pose is None:
+    if not len(current_pose) or not len(reference_pose):
         return False
     match_count = 0
     total_count = 0
