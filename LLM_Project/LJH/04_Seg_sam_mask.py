@@ -30,7 +30,7 @@ image_paths = glob.glob(os.path.join(input_dir, "*.jpg"))
 
 # 파일이 없을 경우 경고
 if not image_paths:
-    print("⚠ 경고: 해당 디렉토리에 JPG 파일이 없습니다!")
+    print("경고: 해당 디렉토리에 JPG 파일이 없습니다!")
 
 # 모든 이미지에 대해 반복 처리
 for image_path in image_paths:
