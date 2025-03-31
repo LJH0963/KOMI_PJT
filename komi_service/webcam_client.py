@@ -904,7 +904,7 @@ async def process_frame_by_status(camera_id, frame, timestamp, status, quality=8
     if status == CAMERA_STATUS_MASK:
         if check_pose_alignment(result_frame, yolo_model, camera_id=camera_id):
             await set_camera_status(camera_id, CAMERA_STATUS_READY)
-        await set_camera_status(camera_id, CAMERA_STATUS_READY)  # for test
+        # await set_camera_status(camera_id, CAMERA_STATUS_READY)  # for test
         result_frame = post_process_mask(result_frame, camera_id=camera_id)
 
     if status == CAMERA_STATUS_READY:
