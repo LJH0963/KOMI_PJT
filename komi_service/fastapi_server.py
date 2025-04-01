@@ -6,17 +6,25 @@ import asyncio
 import json
 import time
 import os
+import cv2
+import numpy as np
+from ultralytics import YOLO
 from datetime import datetime
 from typing import Dict, List, Set, Optional
 import threading
 from contextlib import asynccontextmanager
 import mimetypes
+import shutil
 
 # MIME 타입 등록
 mimetypes.add_type("video/mp4", ".mp4")
 
 # 영상 저장 경로 설정
 VIDEO_STORAGE_PATH = os.environ.get("VIDEO_STORAGE_PATH", "./video_uploads")
+VIDEO_ANALYSIS_PATH = os.environ.get("VIDEO_ANALYSIS_PATH", "./video_analysis")
+
+# YOLO 모델 경로
+YOLO_MODEL_PATH = os.environ.get("YOLO_MODEL_PATH", "yolo11x-pose.pt")
 
 # 데이터 디렉토리 설정
 DATA_DIRECTORY = os.environ.get("DATA_DIRECTORY", "./data")
@@ -74,10 +82,207 @@ exercise_data = {
     ]
 }
 
+# 영상 처리 함수: 영상에서 프레임 추출
+async def extract_frames(video_path: str, output_dir: str, max_frames: int = 87):
+    """
+    영상에서 프레임을 추출하여 이미지 파일로 저장하는 함수
+    Args:
+        video_path: 영상 파일 경로
+        output_dir: 프레임 이미지 저장 경로
+        max_frames: 최대 추출 프레임 수 (기본값: 87)
+    Returns:
+        추출된 프레임 수
+    """
+    # 이미지 저장 디렉토리 생성
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # 영상 파일 열기
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise Exception(f"영상 파일을 열 수 없습니다: {video_path}")
+    
+    # 프레임 수 확인 및 추출 간격 계산
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    step = max(1, total_frames // max_frames) if total_frames > max_frames else 1
+    
+    # 프레임 추출
+    extracted_count = 0
+    frame_idx = 0
+    
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        if frame_idx % step == 0 and extracted_count < max_frames:
+            output_image_path = os.path.join(output_dir, f"frame_{extracted_count:03d}.jpg")
+            cv2.imwrite(output_image_path, frame)
+            extracted_count += 1
+        
+        frame_idx += 1
+    
+    cap.release()
+    return extracted_count
+
+# 포즈 분석 함수: YOLO 모델을 사용하여 포즈 추정
+async def run_pose_estimation(image_dir: str, json_dir: str, model_path: str = YOLO_MODEL_PATH):
+    """
+    추출된 이미지에서 YOLO 모델을 사용하여 포즈를 추정하고 JSON으로 저장하는 함수
+    Args:
+        image_dir: 이미지 디렉토리 경로
+        json_dir: JSON 저장 디렉토리 경로
+        model_path: YOLO 모델 경로
+    Returns:
+        분석된 이미지 수
+    """
+    # JSON 저장 디렉토리 생성
+    os.makedirs(json_dir, exist_ok=True)
+    
+    # YOLO 모델 로드
+    try:
+        yolo_model = YOLO(model_path)
+    except Exception as e:
+        raise Exception(f"YOLO 모델 로드 실패: {str(e)}")
+    
+    # 키포인트 이름 정의
+    COCO_KEYPOINTS = ["nose", "left_eye", "right_eye", "left_ear", "right_ear",
+                      "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
+                      "left_wrist", "right_wrist", "left_hip", "right_hip",
+                      "left_knee", "right_knee", "left_ankle", "right_ankle"]
+    
+    # 이미지 파일 목록 가져오기
+    image_files = [f for f in os.listdir(image_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+    image_files.sort()
+    
+    analyzed_count = 0
+    
+    # 각 이미지에 대해 포즈 추정 실행
+    for img_file in image_files:
+        img_path = os.path.join(image_dir, img_file)
+        
+        # 이미지 로드
+        image = cv2.imread(img_path)
+        if image is None:
+            continue
+            
+        # YOLO 모델로 포즈 추정
+        results = yolo_model(image)
+        
+        # 결과 JSON 초기화
+        json_data = {'image_name': img_file, 'bboxes': [], 'keypoints': []}
+        keypoints_dict = {part: {"x": None, "y": None, "confidence": 0.0} for part in COCO_KEYPOINTS}
+        
+        # 결과 처리
+        for result in results:
+            # 바운딩 박스 정보 추출
+            if result.boxes is not None:
+                for bbox, conf, cls in zip(result.boxes.xyxy.cpu().numpy(), 
+                                         result.boxes.conf.cpu().numpy(), 
+                                         result.boxes.cls.cpu().numpy()):
+                    json_data['bboxes'].append({
+                        'class': int(cls), 
+                        'bbox': list(map(int, bbox)), 
+                        'confidence': float(conf)
+                    })
+            
+            # 키포인트 정보 추출
+            if result.keypoints is not None:
+                for idx, (kp, score) in enumerate(zip(result.keypoints.xy.cpu().numpy()[0], 
+                                                    result.keypoints.conf.cpu().numpy()[0])):
+                    x, y, conf = int(kp[0]), int(kp[1]), float(score)
+                    keypoints_dict[COCO_KEYPOINTS[idx]] = {
+                        'x': x if conf > 0.1 else None,
+                        'y': y if conf > 0.1 else None,
+                        'confidence': conf
+                    }
+        
+        # 키포인트 정보 추가
+        json_data["keypoints"] = [
+            {"part": part, **keypoints_dict[part]} for part in COCO_KEYPOINTS
+        ]
+        
+        # 시각화된 이미지 저장 (옵션)
+        if result.keypoints is not None:
+            visualized_img = results[0].plot()
+            vis_path = os.path.join(image_dir, f"vis_{img_file}")
+            cv2.imwrite(vis_path, visualized_img)
+        
+        # JSON 파일로 저장
+        json_path = os.path.join(json_dir, img_file.replace('.jpg', '.json').replace('.jpeg', '.json').replace('.png', '.json'))
+        with open(json_path, 'w', encoding='utf-8') as jf:
+            json.dump(json_data, jf, indent=4)
+            
+        analyzed_count += 1
+    
+    return analyzed_count
+
+# 영상 분석 처리 함수: 전체 분석 과정 관리
+async def process_video(video_path: str, video_id: str):
+    """
+    영상을 처리하고 포즈를 분석하는 전체 과정을 관리하는 함수
+    Args:
+        video_path: 영상 파일 경로
+        video_id: 영상 ID
+    Returns:
+        분석 결과 정보
+    """
+    # 분석 결과 저장 디렉토리 설정
+    analysis_dir = os.path.join(VIDEO_ANALYSIS_PATH, video_id)
+    image_dir = os.path.join(analysis_dir, "images")
+    json_dir = os.path.join(analysis_dir, "json")
+    
+    # 디렉토리 초기화
+    if os.path.exists(analysis_dir):
+        shutil.rmtree(analysis_dir)
+    os.makedirs(analysis_dir, exist_ok=True)
+    
+    try:
+        # 1. 영상에서 프레임 추출
+        frame_count = await extract_frames(video_path, image_dir)
+        
+        # 2. 포즈 추정 실행
+        if frame_count > 0:
+            analyzed_count = await run_pose_estimation(image_dir, json_dir)
+            
+            # 3. 결과 요약 정보 생성
+            summary = {
+                "video_id": video_id,
+                "frame_count": frame_count,
+                "analyzed_count": analyzed_count,
+                "timestamp": datetime.now().isoformat(),
+                "status": "completed"
+            }
+            
+            # 요약 정보 저장
+            with open(os.path.join(analysis_dir, "analysis_summary.json"), 'w', encoding='utf-8') as sf:
+                json.dump(summary, sf, indent=4)
+            
+            return summary
+        else:
+            raise Exception("프레임 추출에 실패했습니다")
+        
+    except Exception as e:
+        # 오류 발생 시 오류 정보 저장
+        error_info = {
+            "video_id": video_id,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat(),
+            "status": "failed"
+        }
+        
+        with open(os.path.join(analysis_dir, "analysis_error.json"), 'w', encoding='utf-8') as ef:
+            json.dump(error_info, ef, indent=4)
+        
+        return error_info
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app_state["start_time"] = datetime.now()
     app_state["last_connection_cleanup"] = datetime.now()
+    
+    # 분석 결과 디렉토리 생성
+    os.makedirs(VIDEO_ANALYSIS_PATH, exist_ok=True)
+    
     yield
     app_state["is_running"] = False
 
@@ -505,7 +710,6 @@ async def camera_websocket(websocket: WebSocket):
                         # 녹화 완료 메시지 처리
                         video_id = data.get("video_id")
                         video_path = data.get("video_path")
-                        duration = data.get("duration", 0)
                         
                         # 녹화 정보 저장
                         with data_lock:
@@ -517,11 +721,10 @@ async def camera_websocket(websocket: WebSocket):
                                 camera_info[camera_id]["recordings"].append({
                                     "video_id": video_id,
                                     "path": video_path,
-                                    "duration": duration,
                                     "timestamp": datetime.now().isoformat()
                                 })
                                 
-                                print(f"카메라 {camera_id}의 녹화 정보 저장 완료: {video_id}, 길이: {duration:.1f}초")
+                                print(f"카메라 {camera_id}의 녹화 정보 저장 완료: {video_id} - {datetime.now().isoformat()}")
                         
                 except json.JSONDecodeError:
                     # JSON 파싱 오류는 무시
@@ -727,18 +930,17 @@ async def get_uploaded_videos_name():
     video_files = [f for f in os.listdir(video_dir) if f.endswith(".mp4")]
     return video_files
 
-
 # 영상 업로드 엔드포인트
 @app.post("/videos/upload")
 async def upload_exercise_video(
     video: UploadFile = File(...),
     exercise_id: str = Form(...),
     user_id: Optional[str] = Form(None),
-    camera_id: Optional[str] = Form(None)
+    camera_id: Optional[str] = Form(None),
+    analyze: bool = Form(True)  # 업로드 후 바로 분석할지 여부
 ):
     """운동 영상 업로드 및 분석 요청"""
     # 업로드 디렉토리 생성
-    # upload_dir = os.path.join(VIDEO_STORAGE_PATH, "uploads")
     upload_dir = VIDEO_STORAGE_PATH
     os.makedirs(upload_dir, exist_ok=True)
     
@@ -773,55 +975,78 @@ async def upload_exercise_video(
                 "exercise_id": exercise_id
             })
     
-    return {
+    # 분석 요청이 있는 경우 비동기로 분석 작업 시작
+    analysis_task = None
+    if analyze:
+        # 비동기 태스크로 분석 작업 실행
+        analysis_task = asyncio.create_task(process_video(file_path, video_id))
+    
+    response_data = {
         "video_id": video_id,
         "camera_id": camera_id,
         "exercise_id": exercise_id,
         "status": "uploaded",
-        "message": "영상이 업로드되었습니다. 분석이 진행 중입니다.",
+        "message": "영상이 업로드되었습니다.",
         "video_url": f"/uploaded_videos/{video_id}"
     }
+    
+    # 분석 요청이 있는 경우 메시지 추가
+    if analyze:
+        response_data["analysis_status"] = "processing"
+        response_data["message"] += " 분석이 진행 중입니다."
+        response_data["analysis_url"] = f"/analysis/video/{video_id}"
+    
+    return response_data
 
-# 자세 분석 엔드포인트
-@app.post("/analyze/pose")
-async def analyze_pose(
-    pose_data: dict = Body(...),
-    exercise_id: str = Form(...),
-    video_id: Optional[str] = Form(None)
-):
-    """사용자의 자세 데이터를 분석하여 결과 제공"""
-    # 실제로는 자세 분석 알고리즘을 통해 사용자 자세 평가
+# 영상 분석 요청 엔드포인트
+@app.post("/videos/{video_id}/analyze")
+async def request_video_analysis(video_id: str):
+    """기존 업로드된 영상 분석 요청"""
+    # 영상 파일 경로 확인
+    video_path = os.path.join(VIDEO_STORAGE_PATH, f"{video_id}.mp4")
     
-    analysis_result = {
-        "exercise_id": exercise_id,
-        "score": 85,  # 예시 점수
-        "feedback": ["무릎 각도가 너무 좁습니다", "등이 굽어있습니다"],
-        "comparison": {
-            "hip_angle": {"user": 80, "reference": 90, "diff": -10},
-            "knee_angle": {"user": 100, "reference": 110, "diff": -10}
-        }
-    }
+    if not os.path.exists(video_path):
+        raise HTTPException(status_code=404, detail="업로드된 영상을 찾을 수 없습니다")
     
-    if video_id:
-        analysis_result["video_id"] = video_id
-    
-    return analysis_result
-
-# 분석 결과 조회 엔드포인트
-@app.get("/analysis/{analysis_id}")
-async def get_analysis_result(analysis_id: str):
-    """특정 분석 결과 조회"""
-    # 실제로는 DB에서 해당 분석 ID의 결과를 조회
+    # 비동기 태스크로 분석 작업 실행
+    asyncio.create_task(process_video(video_path, video_id))
     
     return {
-        "analysis_id": analysis_id,
-        "status": "completed",
-        "result": {
-            "score": 87,
-            "feedback": ["무릎 각도 개선됨", "등 자세 교정 필요"],
-            "detailed_analysis": "..."
-        }
+        "video_id": video_id,
+        "status": "processing",
+        "message": "영상 분석이 시작되었습니다.",
+        "analysis_url": f"/analysis/video/{video_id}"
     }
+
+# 영상 분석 결과 조회 엔드포인트
+@app.get("/analysis/video/{video_id}")
+async def get_video_analysis_result(video_id: str):
+    """영상 분석 결과 조회"""
+    # 분석 결과 디렉토리 확인
+    analysis_dir = os.path.join(VIDEO_ANALYSIS_PATH, video_id)
+    
+    if not os.path.exists(analysis_dir):
+        raise HTTPException(status_code=404, detail="분석 결과를 찾을 수 없습니다")
+    
+    # 요약 파일 확인
+    summary_path = os.path.join(analysis_dir, "analysis_summary.json")
+    error_path = os.path.join(analysis_dir, "analysis_error.json")
+    
+    if os.path.exists(summary_path):
+        with open(summary_path, 'r', encoding='utf-8') as f:
+            summary = json.load(f)
+        return summary
+    elif os.path.exists(error_path):
+        with open(error_path, 'r', encoding='utf-8') as f:
+            error_info = json.load(f)
+        return error_info
+    else:
+        # 처리 중이거나 결과가 없는 경우
+        return {
+            "video_id": video_id,
+            "status": "processing",
+            "message": "분석이 진행 중이거나 아직 결과가 없습니다."
+        }
 
 # # 녹화 목록 조회 엔드포인트
 # @app.get("/cameras/{camera_id}/recordings")

@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 import random
 import numpy as np
 from ultralytics import YOLO
-from pose_detection import YoloPoseModel
+# from pose_detection import YoloPoseModel
 
 yolo_model = YOLO("yolo11x-pose.pt")
 # 스레드별 전용 세션과 이벤트 루프
@@ -490,9 +490,9 @@ async def camera_loop(camera_id, camera, quality=85, max_width=640, flip=False):
     """단일 카메라 처리 비동기 루프"""
     global pose_model, camera_status, last_pose_detection_times
     
-    # 포즈 감지 모델이 없으면 초기화
-    if pose_model is None:
-        pose_model = YoloPoseModel()
+    # # 포즈 감지 모델이 없으면 초기화
+    # if pose_model is None:
+    #     pose_model = YoloPoseModel()
     
     # 카메라 정보 구성
     camera_info = {
