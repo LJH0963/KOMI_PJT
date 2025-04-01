@@ -1029,13 +1029,13 @@ def post_process_detect(frame, camera_id=None, threshold_px=20):
             
             # 얼굴 관련 키포인트 인덱스 (YOLO 포맷)
             # 0: 코, 1-4: 얼굴(왼쪽 눈, 오른쪽 눈, 왼쪽 귀, 오른쪽 귀)
-            face_keypoints = [1, 2, 3, 4]  # 코(0)는 제외, 표시해야 함
-            
+            # face_keypoints = [1, 2, 3, 4]  # 코(0)는 제외, 표시해야 함
+            core_keypoints = [0, 5, 6, 11, 12, 13, 14, 15, 16]
             # 거리 계산 및 시각화
-            for i in range(len(keypoints)):
-                # 얼굴 관련 키포인트는 코를 제외하고 건너뛰기
-                if i in face_keypoints:
-                    continue
+            for i in core_keypoints:
+                # # 얼굴 관련 키포인트는 코를 제외하고 건너뛰기
+                # if i in face_keypoints:
+                #     continue
                     
                 if i < len(reference_keypoints):
                     ref = reference_keypoints[i]
