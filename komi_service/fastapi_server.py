@@ -15,15 +15,17 @@ import threading
 from contextlib import asynccontextmanager
 import mimetypes
 import shutil
-# LLM 관련 라이브러리 추가
+# LLM 관련 라이브러리
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableMap, RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_community.vectorstores import Chroma
+
 import re
 from collections import Counter
 from dotenv import load_dotenv
+import concurrent.futures  # 멀티프로세싱 관련 라이브러리
 load_dotenv()
 
 # MIME 타입 등록
@@ -182,9 +184,11 @@ def generate_summary_prompt(input_data: dict) -> str:
     )
     return prompt
 
-# LLM을 사용한 분석 요약 생성 함수
-async def generate_llm_analysis(pose_eval_path: str, output_json_path: str):
-    """LLM을 사용하여 포즈 분석 결과를 해석하고 개선점을 제안"""
+# LLM을 사용한 분석 요약 생성 함수 (프로세스 풀에서 호출되는 함수)
+def generate_llm_analysis_in_process(pose_eval_path: str, output_json_path: str):
+    """
+    LLM을 사용하여 포즈 분석 결과를 해석하고 개선점을 제안 (별도 프로세스에서 실행)
+    """
     try:
         # 1. 포즈 평가 결과 로드
         with open(pose_eval_path, 'r', encoding='utf-8') as f:
@@ -232,6 +236,10 @@ async def generate_llm_analysis(pose_eval_path: str, output_json_path: str):
         with open(output_json_path, 'w', encoding='utf-8') as f:
             json.dump(result, f, indent=4, ensure_ascii=False)
         
+        # 9. 완료 표시 파일 생성 (분석 완료 여부를 확인하기 위한 파일)
+        with open(output_json_path + ".done", 'w') as f:
+            f.write("done")
+        
         return result
     
     except Exception as e:
@@ -243,6 +251,10 @@ async def generate_llm_analysis(pose_eval_path: str, output_json_path: str):
         
         with open(output_json_path, 'w', encoding='utf-8') as f:
             json.dump(error_result, f, indent=4, ensure_ascii=False)
+        
+        # 오류 표시 파일 생성
+        with open(output_json_path + ".error", 'w') as f:
+            f.write(str(e))
         
         return error_result
 
@@ -551,12 +563,6 @@ async def run_pose_estimation(image_dir: str, json_dir: str, model_path: str = Y
             {"part": part, **keypoints_dict[part]} for part in COCO_KEYPOINTS
         ]
         
-        # # 시각화된 이미지 저장 (옵션)
-        # if result.keypoints is not None:
-        #     visualized_img = results[0].plot()
-        #     vis_path = os.path.join(image_dir, f"vis_{img_file}")
-        #     cv2.imwrite(vis_path, visualized_img)
-        
         # JSON 파일로 저장
         json_path = os.path.join(json_dir, img_file.replace('.jpg', '.json').replace('.jpeg', '.json').replace('.png', '.json'))
         with open(json_path, 'w', encoding='utf-8') as jf:
@@ -566,7 +572,10 @@ async def run_pose_estimation(image_dir: str, json_dir: str, model_path: str = Y
     
     return analyzed_count
 
-# 영상 분석 처리 함수: 전체 분석 과정 관리 - LLM 분석 단계 추가
+# 프로세스 풀 생성 (전역 변수)
+process_pool = concurrent.futures.ProcessPoolExecutor(max_workers=2)
+
+# 영상 분석 처리 함수: 전체 분석 과정 관리 - LLM 분석 단계를 별도 프로세스로 분리
 async def process_video(video_path: str, video_id: str, exercise_id: str = None):
     """
     영상을 처리하고 포즈를 분석하는 전체 과정을 관리하는 함수
@@ -611,24 +620,32 @@ async def process_video(video_path: str, video_id: str, exercise_id: str = None)
             # 3. 포즈 각도 평가
             pose_eval_result = await evaluate_pose_angles(json_dir, exercise_id, pose_eval_path)
             
-            # 4. LLM 분석 추가
-            llm_analysis_result = await generate_llm_analysis(pose_eval_path, llm_result_path)
-            
-            # 5. 결과 요약 정보 생성
+            # 4. 결과 요약 정보 생성 (LLM 분석 시작 전)
             summary = {
                 "video_id": video_id,
                 "exercise_id": exercise_id,
                 "frame_count": frame_count,
                 "analyzed_count": analyzed_count,
                 "pose_evaluation": pose_eval_result,
-                "llm_analysis_available": True,
+                "llm_analysis_available": False,  # LLM 분석 진행 중
                 "timestamp": datetime.now().isoformat(),
-                "status": "completed"
+                "status": "processing_llm"  # LLM 분석 진행 중 상태
             }
             
             # 요약 정보 저장
             with open(os.path.join(analysis_dir, "analysis_summary.json"), 'w', encoding='utf-8') as sf:
                 json.dump(summary, sf, indent=4)
+            
+            # 5. LLM 분석을 별도 프로세스에서 실행
+            # 프로세스 풀에 작업 제출
+            process_pool.submit(
+                generate_llm_analysis_in_process,
+                pose_eval_path,
+                llm_result_path
+            )
+            
+            # 백그라운드에서 결과 확인 작업 시작
+            asyncio.create_task(check_llm_analysis_completion(llm_result_path, analysis_dir))
             
             return summary
         else:
@@ -649,6 +666,86 @@ async def process_video(video_path: str, video_id: str, exercise_id: str = None)
         
         return error_info
 
+# LLM 분석 완료 확인 함수
+async def check_llm_analysis_completion(llm_result_path: str, analysis_dir: str):
+    """LLM 분석이 완료되었는지 주기적으로 확인하고 요약 정보 업데이트"""
+    max_wait_time = 300  # 최대 대기 시간(초)
+    start_time = time.time()
+    check_interval = 5  # 5초마다 확인
+    
+    summary_path = os.path.join(analysis_dir, "analysis_summary.json")
+    done_marker = llm_result_path + ".done"
+    error_marker = llm_result_path + ".error"
+    
+    while time.time() - start_time < max_wait_time:
+        # 완료 마커 확인
+        if os.path.exists(done_marker):
+            # 분석 완료: 요약 정보 업데이트
+            if os.path.exists(summary_path):
+                try:
+                    with open(summary_path, 'r', encoding='utf-8') as f:
+                        summary = json.load(f)
+                    
+                    summary["llm_analysis_available"] = True
+                    summary["status"] = "completed"
+                    summary["timestamp"] = datetime.now().isoformat()
+                    
+                    with open(summary_path, 'w', encoding='utf-8') as f:
+                        json.dump(summary, f, indent=4, ensure_ascii=False)
+                    
+                    # 마커 파일 삭제
+                    os.remove(done_marker)
+                    print(f"LLM 분석 완료: {os.path.basename(analysis_dir)}")
+                    return
+                except Exception as e:
+                    print(f"요약 정보 업데이트 중 오류: {str(e)}")
+        
+        # 오류 마커 확인
+        elif os.path.exists(error_marker):
+            # 분석 오류: 요약 정보 업데이트
+            if os.path.exists(summary_path):
+                try:
+                    with open(summary_path, 'r', encoding='utf-8') as f:
+                        summary = json.load(f)
+                    
+                    with open(error_marker, 'r') as f:
+                        error_msg = f.read()
+                    
+                    summary["llm_analysis_available"] = False
+                    summary["status"] = "llm_failed"
+                    summary["llm_error"] = error_msg
+                    summary["timestamp"] = datetime.now().isoformat()
+                    
+                    with open(summary_path, 'w', encoding='utf-8') as f:
+                        json.dump(summary, f, indent=4, ensure_ascii=False)
+                    
+                    # 마커 파일 삭제
+                    os.remove(error_marker)
+                    print(f"LLM 분석 오류: {os.path.basename(analysis_dir)}")
+                    return
+                except Exception as e:
+                    print(f"오류 정보 업데이트 중 오류: {str(e)}")
+        
+        # 대기 후 다시 확인
+        await asyncio.sleep(check_interval)
+    
+    # 최대 대기 시간 초과
+    if os.path.exists(summary_path):
+        try:
+            with open(summary_path, 'r', encoding='utf-8') as f:
+                summary = json.load(f)
+            
+            summary["status"] = "llm_timeout"
+            summary["llm_error"] = "LLM 분석 시간 초과"
+            summary["timestamp"] = datetime.now().isoformat()
+            
+            with open(summary_path, 'w', encoding='utf-8') as f:
+                json.dump(summary, f, indent=4, ensure_ascii=False)
+            
+            print(f"LLM 분석 시간 초과: {os.path.basename(analysis_dir)}")
+        except Exception as e:
+            print(f"시간 초과 정보 업데이트 중 오류: {str(e)}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app_state["start_time"] = datetime.now()
@@ -659,6 +756,10 @@ async def lifespan(app: FastAPI):
     os.makedirs(REFERENCE_POSES_PATH, exist_ok=True)
     
     yield
+    
+    # 어플리케이션 종료 시 프로세스 풀 정리
+    print("프로세스 풀 종료 중...")
+    process_pool.shutdown(wait=False)
     app_state["is_running"] = False
 
 app = FastAPI(lifespan=lifespan)
@@ -1350,11 +1451,10 @@ async def upload_exercise_video(
                 "exercise_id": exercise_id
             })
     
-    # 분석 요청이 있는 경우 비동기로 분석 작업 시작
-    analysis_task = None
+    # 분석 요청이 있는 경우 비동기로 분석 작업 시작 (백그라운드)
     if analyze:
-        # 비동기 태스크로 분석 작업 실행
-        analysis_task = asyncio.create_task(process_video(file_path, video_id, exercise_id))
+        # 비동기 태스크로 분석 작업 시작 (기다리지 않고 즉시 반환)
+        asyncio.create_task(process_video(file_path, video_id, exercise_id))
     
     response_data = {
         "video_id": video_id,
@@ -1383,7 +1483,7 @@ async def request_video_analysis(video_id: str, exercise_id: Optional[str] = Non
     if not os.path.exists(video_path):
         raise HTTPException(status_code=404, detail="업로드된 영상을 찾을 수 없습니다")
     
-    # 비동기 태스크로 분석 작업 실행
+    # 비동기 태스크로 분석 작업 실행 (기다리지 않고 즉시 반환)
     asyncio.create_task(process_video(video_path, video_id, exercise_id))
     
     return {
