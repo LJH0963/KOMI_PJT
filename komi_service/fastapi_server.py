@@ -653,6 +653,18 @@ async def camera_status_control(
             if status == "record":
                 camera_info[camera_id]["recording_start_time"] = datetime.now().isoformat()
             
+            # ready 상태로 변경된 경우 모든 카메라 상태 확인
+            if status == "ready":
+                all_ready = all(info.get("status") == "ready" for _, info in camera_info.items() if "websocket" in info)
+                print("all_ready", all_ready)
+                # 모든 카메라가 ready 상태면 record로 변경
+                if all_ready:
+                    for cam_id, info in camera_info.items():
+                        if "websocket" in info:
+                            await info["websocket"].send_json({"type": "status_control", "status": "record"})
+                            info["status"] = "record"
+                            info["recording_start_time"] = datetime.now().isoformat()
+            
             return {
                 "status": "success",
                 "camera_id": camera_id,
