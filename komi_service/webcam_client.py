@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 import random
 import numpy as np
 from ultralytics import YOLO
+from sklearn.metrics.pairwise import cosine_similarity
 # from pose_detection import YoloPoseModel
 
 yolo_model = YOLO("yolo11x-pose.pt")
@@ -25,7 +26,7 @@ server_time_offset = 0.0  # 서버와의 시간차 (초 단위)
 ws_connections = {}  # 카메라 ID -> WebSocket 연결
 connection_status = {}  # 카메라 ID -> 연결 상태 ("connected", "connecting", "disconnected")
 last_ping_times = {}  # 카메라 ID -> 마지막 핑 전송 시간
-pose_model = None  # YOLO 포즈 모델 인스턴스
+# pose_model = None  # YOLO 포즈 모델 인스턴스
 last_pose_detection_times = {}  # 카메라 ID -> 마지막 포즈 감지 시간
 camera_status = {}  # 카메라 ID -> 상태 ("off", "on", "ready", "record", "detect")
 video_recorders = {}  # 카메라 ID -> 비디오 레코더 객체
@@ -51,6 +52,44 @@ VIDEO_OUTPUT_DIR = "video_webcam"
 VIDEO_FPS = 15
 VIDEO_FORMAT = ".mp4"
 
+
+def load_pose_database():
+    """
+    디렉토리 내의 모든 포즈 JSON을 로드하여 데이터베이스로 구성
+    우선은 squat 포즈 데이터베이스만 로드
+    Returns:
+        np.ndarray: 포즈 데이터베이스, shape: (N, 68) - N은 파일 수, 각 행은 x1, y1, x2, y2, ... 형태로 펼쳐진 좌표
+    """
+    pose_database = {}
+    pose_filenames = {}
+    # 디렉토리 내 모든 JSON 파일 로드
+    for direction in ['front', 'side']:
+        pose_vectors = []
+        filenames = []
+        directory = f'data/squat/{direction}_json/'
+        for filename in sorted(os.listdir(directory)):
+            if filename.endswith('.json'):
+                filepath = os.path.join(directory, filename)
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+            
+            # 키포인트를 1차원 벡터로 변환 (x1, y1, x2, y2, ...)
+            keypoints_flat = []
+            for kp in data['keypoints']:
+                keypoints_flat.append(kp["x"] if kp["x"] is not None else 0.0)
+                keypoints_flat.append(kp["y"] if kp["y"] is not None else 0.0)
+            
+            pose_vectors.append(keypoints_flat)
+            filenames.append(filename)
+    
+        # 전체 포즈 데이터베이스 생성
+        pose_database[direction] = np.array(pose_vectors, dtype=np.float16)
+        pose_filenames[direction] = filenames
+        print(f"Loaded {len(pose_vectors)} pose vectors for {direction} direction")
+    return pose_database, pose_filenames
+
+# 전역 상수로 포즈 데이터베이스 로드
+POSE_DATABASE, POSE_FILENAMES = load_pose_database()
 
 def load_reference_pose(json_path):
     """기준 포즈 JSON을 로드하는 함수"""
@@ -488,7 +527,7 @@ async def send_frame_via_websocket(camera_id, image_data, timestamp, pose_data=N
 # 메인 카메라 처리 루프
 async def camera_loop(camera_id, camera, quality=85, max_width=640, flip=False):
     """단일 카메라 처리 비동기 루프"""
-    global pose_model, camera_status, last_pose_detection_times
+    global camera_status, last_pose_detection_times
     
     # # 포즈 감지 모델이 없으면 초기화
     # if pose_model is None:
@@ -818,6 +857,7 @@ def overlay_countdown(frame, remaining):
     result_frame = cv2.putText(frame, text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 5, (0, 0, 255), 10)
     return result_frame
 
+
 cnt_tmp_test = 0
 def is_pose_similar_by_accuracy(
     current_pose,
@@ -872,6 +912,53 @@ def check_pose_alignment(frame, yolo_model, camera_id):
 
     return False
 
+def check_similar_pose(frame, camera_id=None):
+    """
+    포즈 감지 및 가장 유사한 포즈 파일명 반환
+    
+    Args:
+        frame: 입력 영상 프레임
+        camera_id: 카메라 ID (front/side 구분용)
+        
+    Returns:
+        원본 프레임 (나중에 시각화 기능 추가 예정)
+    """
+    global yolo_model, POSE_DATABASE, POSE_FILENAMES
+    
+    # 포즈 방향 결정 (카메라ID가 없거나 잘못된 경우 front로 기본 설정)
+    direction = camera_id if camera_id in ['front', 'side'] else 'front'
+    
+    # 프레임에서 포즈 감지
+    results = yolo_model.predict(source=frame, stream=False, verbose=False)
+    
+    # 감지된 사람이 있는지 확인
+    for result in results:
+        if result.keypoints is not None and len(result.keypoints) > 0:
+            # 첫 번째 사람의 키포인트 추출
+            keypoints = result.keypoints.xy[0].cpu().numpy()
+            
+            # 키포인트를 1차원 벡터로 변환 (x1, y1, x2, y2, ...)
+            keypoints_flat = []
+            for kp in keypoints:
+                keypoints_flat.append(float(kp[0]) if not np.isnan(kp[0]) else 0.0)
+                keypoints_flat.append(float(kp[1]) if not np.isnan(kp[1]) else 0.0)
+            
+            # 사용자 포즈 벡터 생성
+            user_pose = np.array(keypoints_flat).reshape(1, -1)
+            
+            # 코사인 유사도 계산
+            similarities = cosine_similarity(user_pose, POSE_DATABASE[direction])
+            
+            # 가장 유사한 포즈 찾기
+            most_similar_index = np.argmax(similarities)
+            # similarity_score = similarities[0, most_similar_index]
+            best_match_filename = POSE_FILENAMES[direction][most_similar_index]
+            
+            # # 결과 출력
+            # print(f"가장 유사한 포즈: {best_match_filename}, 유사도: {similarity_score:.4f}")
+            break  # 첫 번째 사람만 처리
+    
+    return best_match_filename
 
 # 프레임 후처리 함수
 def post_process_mask(frame, camera_id=None):
@@ -897,10 +984,87 @@ def post_process_record(frame, camera_id=None, remaining=0):
             video_recorders[camera_id]["writer"].write(frame)
     return frame
 
+def post_process_detect(frame, camera_id=None, threshold_px=20):
+    """
+    포즈 감지 후처리 - 가장 유사한 포즈와 비교하여 문제 지점 시각화
+    코를 제외한 얼굴 키포인트는 표시하지 않음
+    
+    Args:
+        frame: 입력 영상 프레임
+        camera_id: 카메라 ID (front/side 구분용)
+        
+    Returns:
+        시각화된 결과 프레임
+    """
+    global yolo_model, POSE_DATABASE, POSE_FILENAMES
+    
+    # 포즈 방향 결정 (카메라ID가 없거나 잘못된 경우 front로 기본 설정)
+    direction = camera_id if camera_id in ['front', 'side'] else 'front'
+    result_frame = frame.copy()
+    
+    # 프레임에서 포즈 감지
+    results = yolo_model.predict(source=frame, stream=False, verbose=False)
+    
+    # 감지된 사람이 있는지 확인
+    for result in results:
+        if result.keypoints is not None and len(result.keypoints) > 0:
+            # 첫 번째 사람의 키포인트 추출
+            keypoints = result.keypoints.xy[0].cpu().numpy()
+            
+            # 가장 유사한 포즈 파일명 찾기
+            best_match_filename = check_similar_pose(frame, camera_id=direction)
+            
+            # 기준 포즈 JSON 로드
+            reference_file_path = f'data/squat/{direction}_json/{best_match_filename}'
+            with open(reference_file_path, 'r') as f:
+                reference_data = json.load(f)
+            
+            # 기준 포즈의 키포인트 추출
+            reference_keypoints = []
+            for kp in reference_data['keypoints']:
+                if kp["x"] is not None and kp["y"] is not None:
+                    reference_keypoints.append([kp["x"], kp["y"]])
+                else:
+                    reference_keypoints.append([None, None])
+            
+            # 얼굴 관련 키포인트 인덱스 (YOLO 포맷)
+            # 0: 코, 1-4: 얼굴(왼쪽 눈, 오른쪽 눈, 왼쪽 귀, 오른쪽 귀)
+            face_keypoints = [1, 2, 3, 4]  # 코(0)는 제외, 표시해야 함
+            
+            # 거리 계산 및 시각화
+            for i in range(len(keypoints)):
+                # 얼굴 관련 키포인트는 코를 제외하고 건너뛰기
+                if i in face_keypoints:
+                    continue
+                    
+                if i < len(reference_keypoints):
+                    ref = reference_keypoints[i]
+                    cur = keypoints[i]
+                    
+                    # 두 포인트가 모두 유효한 경우에만 계산
+                    if ref[0] is not None and cur[0] is not None and not np.isnan(cur[0]) and not np.isnan(cur[1]):
+                        dist = np.linalg.norm(np.array(ref) - np.array(cur))
+                        
+                        # 거리가 임계값을 초과하면 해당 키포인트 강조 표시
+                        if dist > threshold_px:
+                            # 빨간색 원으로 문제 지점 표시
+                            cv2.circle(result_frame, (int(cur[0]), int(cur[1])), 20, (0, 0, 255), 3)
+                        else:
+                            # 정상 지점은 녹색 원으로 표시
+                            cv2.circle(result_frame, (int(cur[0]), int(cur[1])), 20, (0, 255, 0), 3)
+            
+            # # 파일명 표시
+            # cv2.putText(result_frame, f"기준: {best_match_filename}", (10, 30), 
+            #             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            
+            break  # 첫 번째 사람만 처리
+    
+    return result_frame
+
 # 카메라 상태에 따른 프레임 처리 함수
 async def process_frame_by_status(camera_id, frame, timestamp, status, quality=85, max_width=640, flip=False):
     """카메라 상태에 따라 프레임 처리"""
-    global pose_model, video_recorders, last_pose_detection_times, record_start_time, camera_status
+    global yolo_model, video_recorders, last_pose_detection_times, record_start_time, camera_status
     
     result_frame = frame.copy()
     pose_data = None
@@ -953,10 +1117,7 @@ async def process_frame_by_status(camera_id, frame, timestamp, status, quality=8
     
     elif status == CAMERA_STATUS_DETECT:
         # 포즈 감지 수행
-        now = time.time()
-        if pose_model and (now - last_pose_detection_times.get(camera_id, 0) >= POSE_DETECTION_INTERVAL):
-            pose_data = pose_model.detect_pose(result_frame.copy())
-            last_pose_detection_times[camera_id] = now
+        result_frame = post_process_detect(result_frame, camera_id=camera_id)
     
     # 이미지 인코딩 (좌우 반전 처리는 encode_image 함수에서 처리됨)
     image_data = encode_image(result_frame, quality=quality, max_width=max_width, flip=flip)

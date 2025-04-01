@@ -1258,7 +1258,47 @@ def exercise_feedback_page():
             set_page("exercise_select_page")
             
     st.title("실시간 운동 피드백")
-    st.text("개발 예정")
+    # 카메라 목록이 없으면 표시 후 종료
+    if not st.session_state.cameras:
+        st.info("연결된 카메라가 없습니다")
+        if st.button("새로고침", key="refresh_camera_btn1"):
+            # st.session_state.cameras = get_cameras()
+            st.rerun()
+        return
+    
+    # 상태가 'off'가 아닌 카메라만 필터링
+    active_cameras = []
+    if hasattr(st.session_state, 'camera_statuses'):
+        active_cameras = [
+            camera_id for camera_id in st.session_state.cameras
+            if st.session_state.camera_statuses.get(camera_id, "off") != "off"
+        ]
+    
+    # 활성화된 카메라가 없으면 메시지 표시
+    if not active_cameras:
+        st.warning("활성화된 카메라가 없습니다. 모든 카메라가 'off' 상태입니다.")
+        if st.button("새로고침", key="refresh_camera_btn2"):
+            st.session_state.cameras = get_cameras()
+            st.rerun()
+        return
+    
+    # 활성화된 카메라들의 상태를 "mask"로 변경
+    for camera_id in active_cameras:
+        result = set_camera_status(camera_id, "detect")
+        if result:
+            st.session_state.camera_statuses[camera_id] = "detect"
+    
+    # 페이지 로드 시 모니터링 상태 활성화 표시
+    st.session_state.is_monitoring = True
+    
+    # 페이지 로드 시 전역 변수 초기화
+    thread_camera_list.clear()
+    
+    # 페이지 진입 시 스레드 재시작 설정
+    st.session_state.need_thread_restart = True
+    
+    # 활성화된 카메라가 있으면 모니터링 함수 호출
+    monitor_cameras(active_cameras)
     
 
 def main():
