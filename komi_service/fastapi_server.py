@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 from datetime import datetime
-from typing import Dict, List, Set, Optional
+from typing import Dict, List, Set, Optional, Tuple
 import threading
 from contextlib import asynccontextmanager
 import mimetypes
@@ -25,6 +25,9 @@ VIDEO_ANALYSIS_PATH = os.environ.get("VIDEO_ANALYSIS_PATH", "./video_analysis")
 
 # YOLO 모델 경로
 YOLO_MODEL_PATH = os.environ.get("YOLO_MODEL_PATH", "yolo11x-pose.pt")
+
+# 참조 포즈 경로 설정
+REFERENCE_POSES_PATH = os.environ.get("REFERENCE_POSES_PATH", "./data")
 
 # 데이터 디렉토리 설정
 DATA_DIRECTORY = os.environ.get("DATA_DIRECTORY", "./data")
@@ -81,6 +84,192 @@ exercise_data = {
         }
     ]
 }
+
+# ----- 포즈 평가를 위한 유틸리티 함수 -----
+
+# JSON에서 keypoints 불러오기
+def load_keypoints_from_json(json_path):
+    with open(json_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    return data.get("keypoints", [])
+
+# 특정 관절 좌표 반환
+def get_point(kps, part_name):
+    for kp in kps:
+        if kp['part'] == part_name and kp['x'] is not None and kp['y'] is not None:
+            return (kp['x'], kp['y'])
+    return None
+
+# 관절 3점으로 각도 계산
+def compute_angle(a, b, c):
+    if a is None or b is None or c is None:
+        return None
+    ba = np.array([a[0] - b[0], a[1] - b[1]])
+    bc = np.array([c[0] - b[0], c[1] - b[1]])
+    cosine = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc))
+    return np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0)))
+
+# 각도 유사도 평가
+def cosine_similarity(vec1, vec2):
+    if None in vec1 or None in vec2:
+        return 0.0
+    vec1 = [v if v is not None else 0 for v in vec1]
+    vec2 = [v if v is not None else 0 for v in vec2]
+    norm1, norm2 = np.linalg.norm(vec1), np.linalg.norm(vec2)
+    if norm1 == 0 or norm2 == 0:
+        return 0.0
+    return np.dot(vec1, vec2) / (norm1 * norm2)
+
+# 포즈 각도 평가 함수
+async def evaluate_pose_angles(target_json_dir, exercise_id, output_json_path):
+    """
+    포즈 각도를 평가하고 결과를 JSON으로 저장
+    Args:
+        target_json_dir: 분석할 JSON 파일 디렉토리
+        exercise_id: 운동 ID (squat, pushup, lunge 등)
+        output_json_path: 결과를 저장할 JSON 파일 경로
+    Returns:
+        평가 결과 요약
+    """
+    # 운동 유형에 맞는 참조 포즈 디렉토리 결정 (front_json 우선, 없으면 side_json)
+    front_ref_dir = os.path.join(REFERENCE_POSES_PATH, exercise_id, "front_json")
+    side_ref_dir = os.path.join(REFERENCE_POSES_PATH, exercise_id, "side_json")
+    
+    # 우선순위에 따라 참조 포즈 디렉토리 선택
+    if os.path.exists(front_ref_dir) and os.listdir(front_ref_dir):
+        ref_pose_dir = front_ref_dir
+        view_type = "front"
+    elif os.path.exists(side_ref_dir) and os.listdir(side_ref_dir):
+        ref_pose_dir = side_ref_dir
+        view_type = "side"
+    else:
+        # 기본값으로 squat의 front_json 사용
+        default_front_dir = os.path.join(REFERENCE_POSES_PATH, "squat", "front_json")
+        default_side_dir = os.path.join(REFERENCE_POSES_PATH, "squat", "side_json")
+        
+        if os.path.exists(default_front_dir) and os.listdir(default_front_dir):
+            ref_pose_dir = default_front_dir
+            view_type = "front"
+        elif os.path.exists(default_side_dir) and os.listdir(default_side_dir):
+            ref_pose_dir = default_side_dir
+            view_type = "side"
+        else:
+            print(f"참조 포즈를 찾을 수 없습니다. exercise_id: {exercise_id}")
+            return {"status": "error", "message": "참조 포즈를 찾을 수 없습니다", "exercise_id": exercise_id}
+    
+    print(f"사용할 참조 포즈 디렉토리: {ref_pose_dir}, 시점: {view_type}")
+    
+    # 결과 저장 딕셔너리
+    result_dict = {}
+    
+    # 타겟 JSON 파일 목록
+    target_files = sorted([f for f in os.listdir(target_json_dir) if f.endswith('.json')])
+    if not target_files:
+        return {"status": "error", "message": "분석할 JSON 파일이 없습니다"}
+    
+    # 참조 JSON 파일 목록
+    ref_files = sorted([f for f in os.listdir(ref_pose_dir) if f.endswith('.json')])
+    if not ref_files:
+        return {"status": "error", "message": "참조 포즈 JSON 파일이 없습니다", "ref_dir": ref_pose_dir}
+    
+    # 참조 데이터 선택 - 첫 번째 파일 사용
+    ref_json_path = os.path.join(ref_pose_dir, ref_files[0])
+    ref_keypoints = load_keypoints_from_json(ref_json_path)
+    
+    # 각 타겟 파일 평가
+    for target_file in target_files:
+        target_json_path = os.path.join(target_json_dir, target_file)
+        target_keypoints = load_keypoints_from_json(target_json_path)
+        
+        # 각도 계산 및 유사도 평가
+        result_dict[target_file] = compute_pose_result(ref_keypoints, target_keypoints)
+    
+    # 평균 점수 계산
+    scores = [result.get("cosine_similarity", 0) for result in result_dict.values()]
+    avg_score = sum(scores) / len(scores) if scores else 0
+    
+    # 전체 결과 요약
+    summary = {
+        "exercise_id": exercise_id,
+        "view_type": view_type,
+        "reference_dir": ref_pose_dir,
+        "frames_analyzed": len(result_dict),
+        "average_similarity": round(avg_score, 4),
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    # 결과를 JSON 파일로 저장
+    with open(output_json_path, 'w', encoding='utf-8') as f:
+        json.dump({
+            "summary": summary,
+            "frame_results": result_dict
+        }, f, indent=4, ensure_ascii=False)
+    
+    return summary
+
+def compute_pose_result(kps1, kps2):
+    """
+    두 포즈 간의 각도 차이 및 유사도 계산
+    Args:
+        kps1: 참조 포즈 키포인트
+        kps2: 평가 대상 포즈 키포인트
+    Returns:
+        각도 차이 및 유사도 결과
+    """
+    def safe_diff(ref, eval):
+        return abs(ref - eval) if ref is not None and eval is not None else 999
+
+    def pass_check(diff):
+        return 1 if diff <= 15 else 0
+
+    # 고관절
+    lh_ref = compute_angle(get_point(kps1, 'left_shoulder'), get_point(kps1, 'left_hip'), get_point(kps1, 'left_knee'))
+    rh_ref = compute_angle(get_point(kps1, 'right_shoulder'), get_point(kps1, 'right_hip'), get_point(kps1, 'right_knee'))
+    lh_eval = compute_angle(get_point(kps2, 'left_shoulder'), get_point(kps2, 'left_hip'), get_point(kps2, 'left_knee'))
+    rh_eval = compute_angle(get_point(kps2, 'right_shoulder'), get_point(kps2, 'right_hip'), get_point(kps2, 'right_knee'))
+
+    # 무릎
+    lk_ref = compute_angle(get_point(kps1, 'left_hip'), get_point(kps1, 'left_knee'), get_point(kps1, 'left_ankle'))
+    rk_ref = compute_angle(get_point(kps1, 'right_hip'), get_point(kps1, 'right_knee'), get_point(kps1, 'right_ankle'))
+    lk_eval = compute_angle(get_point(kps2, 'left_hip'), get_point(kps2, 'left_knee'), get_point(kps2, 'left_ankle'))
+    rk_eval = compute_angle(get_point(kps2, 'right_hip'), get_point(kps2, 'right_knee'), get_point(kps2, 'right_ankle'))
+
+    # 차이
+    lh_diff = safe_diff(lh_ref, lh_eval)
+    rh_diff = safe_diff(rh_ref, rh_eval)
+    lk_diff = safe_diff(lk_ref, lk_eval)
+    rk_diff = safe_diff(rk_ref, rk_eval)
+
+    # 통과 여부
+    pass_lh = pass_check(lh_diff)
+    pass_rh = pass_check(rh_diff)
+    pass_lk = pass_check(lk_diff)
+    pass_rk = pass_check(rk_diff)
+
+    # 유사도
+    ref_vec = [lh_ref, rh_ref, lk_ref, rk_ref]
+    eval_vec = [lh_eval, rh_eval, lk_eval, rk_eval]
+    sim_score = cosine_similarity(ref_vec, eval_vec)
+
+    # 실패 부위
+    failed_parts = []
+    if not pass_lh: failed_parts.append("left_hip")
+    if not pass_rh: failed_parts.append("right_hip")
+    if not pass_lk: failed_parts.append("left_knee")
+    if not pass_rk: failed_parts.append("right_knee")
+
+    return {
+        "left_hip_angle_diff": round(lh_diff, 2) if lh_diff != 999 else None,
+        "right_hip_angle_diff": round(rh_diff, 2) if rh_diff != 999 else None,
+        "left_knee_angle_diff": round(lk_diff, 2) if lk_diff != 999 else None,
+        "right_knee_angle_diff": round(rk_diff, 2) if rk_diff != 999 else None,
+        "pass_left_hip": pass_lh,
+        "pass_right_hip": pass_rh,
+        "pass_left_knee": pass_lk,
+        "pass_right_knee": pass_rk,
+        "cosine_similarity": round(sim_score, 4),
+        "failed_parts": failed_parts
+    }
 
 # 영상 처리 함수: 영상에서 프레임 추출
 async def extract_frames(video_path: str, output_dir: str, max_frames: int = 87):
@@ -201,11 +390,11 @@ async def run_pose_estimation(image_dir: str, json_dir: str, model_path: str = Y
             {"part": part, **keypoints_dict[part]} for part in COCO_KEYPOINTS
         ]
         
-        # 시각화된 이미지 저장 (옵션)
-        if result.keypoints is not None:
-            visualized_img = results[0].plot()
-            vis_path = os.path.join(image_dir, f"vis_{img_file}")
-            cv2.imwrite(vis_path, visualized_img)
+        # # 시각화된 이미지 저장 (옵션)
+        # if result.keypoints is not None:
+        #     visualized_img = results[0].plot()
+        #     vis_path = os.path.join(image_dir, f"vis_{img_file}")
+        #     cv2.imwrite(vis_path, visualized_img)
         
         # JSON 파일로 저장
         json_path = os.path.join(json_dir, img_file.replace('.jpg', '.json').replace('.jpeg', '.json').replace('.png', '.json'))
@@ -217,19 +406,32 @@ async def run_pose_estimation(image_dir: str, json_dir: str, model_path: str = Y
     return analyzed_count
 
 # 영상 분석 처리 함수: 전체 분석 과정 관리
-async def process_video(video_path: str, video_id: str):
+async def process_video(video_path: str, video_id: str, exercise_id: str = None):
     """
     영상을 처리하고 포즈를 분석하는 전체 과정을 관리하는 함수
     Args:
         video_path: 영상 파일 경로
         video_id: 영상 ID
+        exercise_id: 운동 ID (squat, pushup, lunge 등), 파일명에서 추출 가능
     Returns:
         분석 결과 정보
     """
+    # 운동 ID가 제공되지 않은 경우 파일명에서 추출 시도
+    if not exercise_id:
+        for ex in exercise_data["exercises"]:
+            if ex["id"] in video_id:
+                exercise_id = ex["id"]
+                break
+        
+        # 기본값 설정
+        if not exercise_id:
+            exercise_id = "squat"  # 기본값으로 스쿼트 설정
+    
     # 분석 결과 저장 디렉토리 설정
     analysis_dir = os.path.join(VIDEO_ANALYSIS_PATH, video_id)
     image_dir = os.path.join(analysis_dir, "images")
     json_dir = os.path.join(analysis_dir, "json")
+    pose_eval_path = os.path.join(analysis_dir, "pose_angle_eval.json")
     
     # 디렉토리 초기화
     if os.path.exists(analysis_dir):
@@ -244,11 +446,16 @@ async def process_video(video_path: str, video_id: str):
         if frame_count > 0:
             analyzed_count = await run_pose_estimation(image_dir, json_dir)
             
-            # 3. 결과 요약 정보 생성
+            # 3. 포즈 각도 평가
+            pose_eval_result = await evaluate_pose_angles(json_dir, exercise_id, pose_eval_path)
+            
+            # 4. 결과 요약 정보 생성
             summary = {
                 "video_id": video_id,
+                "exercise_id": exercise_id,
                 "frame_count": frame_count,
                 "analyzed_count": analyzed_count,
+                "pose_evaluation": pose_eval_result,
                 "timestamp": datetime.now().isoformat(),
                 "status": "completed"
             }
@@ -265,6 +472,7 @@ async def process_video(video_path: str, video_id: str):
         # 오류 발생 시 오류 정보 저장
         error_info = {
             "video_id": video_id,
+            "exercise_id": exercise_id,
             "error": str(e),
             "timestamp": datetime.now().isoformat(),
             "status": "failed"
@@ -282,6 +490,7 @@ async def lifespan(app: FastAPI):
     
     # 분석 결과 디렉토리 생성
     os.makedirs(VIDEO_ANALYSIS_PATH, exist_ok=True)
+    os.makedirs(REFERENCE_POSES_PATH, exist_ok=True)
     
     yield
     app_state["is_running"] = False
@@ -979,7 +1188,7 @@ async def upload_exercise_video(
     analysis_task = None
     if analyze:
         # 비동기 태스크로 분석 작업 실행
-        analysis_task = asyncio.create_task(process_video(file_path, video_id))
+        analysis_task = asyncio.create_task(process_video(file_path, video_id, exercise_id))
     
     response_data = {
         "video_id": video_id,
@@ -1000,7 +1209,7 @@ async def upload_exercise_video(
 
 # 영상 분석 요청 엔드포인트
 @app.post("/videos/{video_id}/analyze")
-async def request_video_analysis(video_id: str):
+async def request_video_analysis(video_id: str, exercise_id: Optional[str] = None):
     """기존 업로드된 영상 분석 요청"""
     # 영상 파일 경로 확인
     video_path = os.path.join(VIDEO_STORAGE_PATH, f"{video_id}.mp4")
@@ -1009,10 +1218,11 @@ async def request_video_analysis(video_id: str):
         raise HTTPException(status_code=404, detail="업로드된 영상을 찾을 수 없습니다")
     
     # 비동기 태스크로 분석 작업 실행
-    asyncio.create_task(process_video(video_path, video_id))
+    asyncio.create_task(process_video(video_path, video_id, exercise_id))
     
     return {
         "video_id": video_id,
+        "exercise_id": exercise_id,
         "status": "processing",
         "message": "영상 분석이 시작되었습니다.",
         "analysis_url": f"/analysis/video/{video_id}"
