@@ -91,5 +91,5 @@ if __name__ == "__main__":
     target_dir = "C:/Users/user/Desktop/img_output/squat/web/new/front_json"
     output_json_path = "C:/WANTED/LLM/KOMI_PJT/LLM_Project/LJH/output_json/front_pose_angle_eval.json"
 
-    evaluator = PoseAngleEvaluator(answer_dir, target_dir, output_json_path)
+    evaluator = PoseAngleEstimator(answer_dir, target_dir, output_json_path)
     evaluator.evaluate()

@@ -94,7 +94,7 @@ class LivePoseEstimator(YOLO):
 # 코드 오류 확인용 실행
 if __name__ == "__main__":
     model_path = "yolo11x-pose.pt"  # YOLO-Pose 설정
-    estimator = PoseEstimator(model_path)
+    estimator = LivePoseEstimator(model_path)
     estimator.start_camera(src=0, width=1280, height=720, fps=30)
     estimator.real_time_video_detecting()
 
