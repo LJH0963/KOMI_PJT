@@ -13,6 +13,7 @@ import random
 import numpy as np
 from ultralytics import YOLO
 from sklearn.metrics.pairwise import cosine_similarity
+from PIL import ImageFont, ImageDraw, Image
 # from pose_detection import YoloPoseModel
 
 yolo_model = YOLO("yolo11x-pose.pt")
@@ -815,6 +816,43 @@ async def send_recording_info(camera_id, video_id, video_path, duration):
     except Exception as e:
         print(f"녹화 정보 전송 오류: {str(e)}")
         return False
+    
+def put_korean_text(image, text, position, font_size=30, color=(0, 0, 0), thickness=1):
+    """한글 텍스트를 이미지에 추가하는 함수"""
+    # OpenCV 이미지를 PIL 이미지로 변환
+    pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+    
+    # PIL 이미지에 텍스트 그리기
+    draw = ImageDraw.Draw(pil_image)
+    
+    # 폰트 설정 (윈도우의 경우 시스템 폰트 경로)
+    # 맑은 고딕 폰트가 없는 경우, 다른 한글 폰트로 대체 가능
+    try:
+        font = ImageFont.truetype("malgun.ttf", font_size)  # Windows 기본 한글 폰트
+    except IOError:
+        try:
+            font = ImageFont.truetype("NanumGothic.ttf", font_size)  # 나눔고딕 폰트
+        except IOError:
+            try:
+                # Ubuntu 등 리눅스 시스템 폰트
+                font = ImageFont.truetype("/usr/share/fonts/truetype/nanum/NanumGothic.ttf", font_size)
+            except IOError:
+                # 폰트를 찾을 수 없는 경우 기본 폰트 사용
+                font = ImageFont.load_default()
+    
+    # 텍스트 줄바꿈 처리
+    lines = text.split('\n')
+    line_height = font_size + 5  # 줄 간격
+    
+    # 각 줄 그리기
+    for i, line in enumerate(lines):
+        pos = (position[0], position[1] + i * line_height)
+        # 한글 텍스트 그리기
+        draw.text(pos, line, font=font, fill=color)
+    
+    # PIL 이미지를 OpenCV 이미지로 다시 변환
+    result_image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+    return result_image
 
 # 마스크 오버레이 함수 (반투명 적용)
 def overlay_mask(frame, mask, alpha_value=100):
@@ -912,6 +950,101 @@ def check_pose_alignment(frame, yolo_model, camera_id):
 
     return False
 
+def analyze_pose(keypoints: np.ndarray) -> list[str]:
+    """
+    YOLO 기반 키포인트 배열을 받아 스쿼트 동작을 분석하고 피드백 제공
+    Args:
+        keypoints (np.ndarray): [17 x 2] 형태의 좌표 배열
+    Returns:
+        tuple: (관절 각도 딕셔너리, 피드백 리스트)
+    """
+    # 주요 관절 인덱스
+    p_idx = {
+        "l_shoulder": 5, "r_shoulder": 6,
+        "l_hip": 11, "r_hip": 12,
+        "l_knee": 13, "r_knee": 14,
+        "l_ankle": 15, "r_ankle": 16,
+    }
+
+    def get_point(name):
+        i = p_idx.get(name)
+        if i is None or i >= len(keypoints):
+            return None
+        x, y = keypoints[i]
+        return np.array([x, y]) if not np.isnan(x) and not np.isnan(y) else None
+
+    def compute_angle(p1, p2, p3):
+        if p1 is None or p2 is None or p3 is None:
+            return None
+        
+        v1, v2 = p1 - p2, p3 - p2
+        norm1, norm2 = np.linalg.norm(v1), np.linalg.norm(v2)
+        if norm1 == 0 or norm2 == 0:
+            return None
+
+        cosine = np.dot(v1, v2) / (norm1 * norm2)
+        return np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0)))
+
+    l_sh, r_sh, l_hip, r_hip, l_knee, r_knee, l_ankle, r_ankle = map(get_point, ["l_shoulder", "r_shoulder", "l_hip", "r_hip", "l_knee", "r_knee", "l_ankle", "r_ankle"])
+
+    # 관절 각도 계산
+    angles = {
+        "left_hip_angle": compute_angle(l_sh, l_hip, l_knee),
+        "right_hip_angle": compute_angle(r_sh, r_hip, r_knee),
+        "left_knee_angle": compute_angle(l_hip, l_knee, l_ankle),
+        "right_knee_angle": compute_angle(r_hip, r_knee, r_ankle),
+    }
+
+    # 척추 각도, 거리 정보
+    if l_sh is not None and r_sh is not None and l_hip is not None and r_hip is not None:
+        mid_sh, mid_hip = (l_sh + r_sh) / 2, (l_hip + r_hip) / 2
+        vertical = mid_hip + np.array([0, -100])
+        if mid_sh is not None and mid_hip is not None and vertical is not None:
+            angles["back_angle"] = compute_angle(mid_sh, mid_hip, vertical)
+    
+    if l_sh is not None and r_sh is not None:
+        angles["shoulder_width"] = np.linalg.norm(l_sh - r_sh)
+    
+    if l_hip is not None and r_hip is not None:
+        angles["hip_width"] = np.linalg.norm(l_hip - r_hip)
+    
+    if l_knee is not None and r_knee is not None:
+        angles["knee_to_knee_distance"] = np.linalg.norm(l_knee - r_knee)
+
+    # 피드백 생성
+    feedback = []
+
+    # 무릎 각도 확인 (100 > 각도 > 90인 경우)
+    left_knee = angles.get("left_knee_angle")
+    right_knee = angles.get("right_knee_angle")
+    if ((left_knee is not None and 100 > left_knee > 90) or 
+        (right_knee is not None and 100 > right_knee > 90)):
+        feedback.append("조금 더 앉아주세요.")
+
+    # 고관절 각도 확인 (130 > 각도 > 120인 경우)
+    left_hip = angles.get("left_hip_angle")
+    right_hip = angles.get("right_hip_angle")
+    if ((left_hip is not None and 130 > left_hip > 120) or 
+        (right_hip is not None and 130 > right_hip > 120)):
+        feedback.append("엉덩이를 더 낮춰보세요.")
+
+    # 허리 각도 확인
+    back_angle = angles.get("back_angle")
+    if back_angle is not None and back_angle < 70:
+        feedback.append("허리를 너무 숙이지 마세요.")
+
+    # 무릎 간격과 어깨 너비 비교
+    knee_to_knee = angles.get("knee_to_knee_distance")
+    width = angles.get("shoulder_width")
+    if knee_to_knee is not None and width is not None:
+        if width * 0.5 < knee_to_knee < width * 0.8:
+            feedback.append("무릎이 너무 붙었습니다. 벌려주세요.")
+        elif width * 1.2 < knee_to_knee < width * 1.5:
+            feedback.append("무릎이 너무 벌어졌습니다. 모아주세요.")
+
+    return feedback
+
+
 def check_similar_pose(frame, camera_id=None):
     """
     포즈 감지 및 가장 유사한 포즈 파일명 반환
@@ -987,7 +1120,7 @@ def post_process_record(frame, camera_id=None, remaining=0):
 def post_process_detect(frame, camera_id=None, threshold_px=20):
     """
     포즈 감지 후처리 - 가장 유사한 포즈와 비교하여 문제 지점 시각화
-    코를 제외한 얼굴 키포인트는 표시하지 않음
+    중요한 키포인트만 출력
     
     Args:
         frame: 입력 영상 프레임
@@ -998,6 +1131,7 @@ def post_process_detect(frame, camera_id=None, threshold_px=20):
     """
     global yolo_model, POSE_DATABASE, POSE_FILENAMES
     
+    frame = cv2.flip(frame, 1)
     # 포즈 방향 결정 (카메라ID가 없거나 잘못된 경우 front로 기본 설정)
     direction = camera_id if camera_id in ['front', 'side'] else 'front'
     result_frame = frame.copy()
@@ -1041,6 +1175,9 @@ def post_process_detect(frame, camera_id=None, threshold_px=20):
                     ref = reference_keypoints[i]
                     cur = keypoints[i]
                     
+                    if cur[0] == 0 or cur[1] == 0:
+                        continue
+                    
                     # 두 포인트가 모두 유효한 경우에만 계산
                     if ref[0] is not None and cur[0] is not None and not np.isnan(cur[0]) and not np.isnan(cur[1]):
                         dist = np.linalg.norm(np.array(ref) - np.array(cur))
@@ -1053,9 +1190,16 @@ def post_process_detect(frame, camera_id=None, threshold_px=20):
                             # 정상 지점은 녹색 원으로 표시
                             cv2.circle(result_frame, (int(cur[0]), int(cur[1])), 20, (0, 255, 0), 3)
             
-            # # 파일명 표시
-            # cv2.putText(result_frame, f"기준: {best_match_filename}", (10, 30), 
-            #             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            feedback = '\n'.join(analyze_pose(keypoints))
+            if feedback:
+                result_frame = put_korean_text(
+                    result_frame, 
+                    f"피드백: {feedback}", 
+                    (10, 30), 
+                    font_size=30, 
+                    color=(0, 0, 255), 
+                    thickness=5
+                )
             
             break  # 첫 번째 사람만 처리
     
@@ -1117,6 +1261,7 @@ async def process_frame_by_status(camera_id, frame, timestamp, status, quality=8
     
     elif status == CAMERA_STATUS_DETECT:
         # 포즈 감지 수행
+        flip = False
         result_frame = post_process_detect(result_frame, camera_id=camera_id)
     
     # 이미지 인코딩 (좌우 반전 처리는 encode_image 함수에서 처리됨)
