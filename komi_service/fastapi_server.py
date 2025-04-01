@@ -103,7 +103,7 @@ if not os.path.exists(VIDEO_STORAGE_PATH):
 
 # 정적 파일 서빙 설정
 app.mount("/data", StaticFiles(directory=DATA_DIRECTORY), name="data")
-app.mount("/uploads", StaticFiles(directory=DATA_DIRECTORY), name="data")
+app.mount("/video_uploads", StaticFiles(directory=VIDEO_STORAGE_PATH), name="video_uploads")
 
 # 헬스 체크 엔드포인트
 @app.get("/health")
@@ -702,21 +702,31 @@ async def get_camera_status(camera_id: str):
 
 # --- 미디어 관리 및 분석 관련 엔드포인트 ---
 
-# 사용자 업로드 영상 스트리밍 엔드포인트
-@app.get("/uploaded_videos/{video_id}")
-async def get_uploaded_video(video_id: str):
-    """사용자가 업로드한 영상을 스트리밍하여 제공"""
-    # video_path = os.path.join(VIDEO_STORAGE_PATH, "uploads", f"{video_id}.mp4")
-    video_path = os.path.join(VIDEO_STORAGE_PATH, f"{video_id}.mp4")
+# # 사용자 업로드 영상 스트리밍 엔드포인트
+# @app.get("/uploaded_videos/{video_id}")
+# async def get_uploaded_video(video_id: str):
+#     """사용자가 업로드한 영상을 스트리밍하여 제공"""
+#     # video_path = os.path.join(VIDEO_STORAGE_PATH, "uploads", f"{video_id}.mp4")
+#     video_path = os.path.join(VIDEO_STORAGE_PATH, f"{video_id}.mp4")
     
-    if not os.path.exists(video_path):
-        raise HTTPException(status_code=404, detail="업로드된 영상을 찾을 수 없습니다")
+#     if not os.path.exists(video_path):
+#         raise HTTPException(status_code=404, detail="업로드된 영상을 찾을 수 없습니다")
     
-    return FileResponse(
-        video_path,
-        media_type="video/mp4",
-        filename=f"user_video_{video_id}.mp4"
-    )
+#     return FileResponse(
+#         video_path,
+#         media_type="video/mp4",
+#         filename=f"user_video_{video_id}.mp4"
+#     )
+@app.get("/uploaded_videos_name")
+async def get_uploaded_videos_name():
+    """사용자가 업로드한 영상 목록 조회"""
+    video_dir = VIDEO_STORAGE_PATH
+    if not os.path.exists(video_dir):
+        return []
+    
+    video_files = [f for f in os.listdir(video_dir) if f.endswith(".mp4")]
+    return video_files
+
 
 # 영상 업로드 엔드포인트
 @app.post("/videos/upload")
@@ -813,39 +823,39 @@ async def get_analysis_result(analysis_id: str):
         }
     }
 
-# 녹화 목록 조회 엔드포인트
-@app.get("/cameras/{camera_id}/recordings")
-async def get_camera_recordings(camera_id: str):
-    """카메라의 녹화 목록 조회"""
-    with data_lock:
-        if camera_id not in camera_info:
-            raise HTTPException(status_code=404, detail="카메라를 찾을 수 없습니다")
+# # 녹화 목록 조회 엔드포인트
+# @app.get("/cameras/{camera_id}/recordings")
+# async def get_camera_recordings(camera_id: str):
+#     """카메라의 녹화 목록 조회"""
+#     with data_lock:
+#         if camera_id not in camera_info:
+#             raise HTTPException(status_code=404, detail="카메라를 찾을 수 없습니다")
         
-        # 녹화 목록 반환
-        recordings = camera_info[camera_id].get("recordings", [])
+#         # 녹화 목록 반환
+#         recordings = camera_info[camera_id].get("recordings", [])
         
-        return {
-            "camera_id": camera_id,
-            "recordings_count": len(recordings),
-            "recordings": recordings
-        }
+#         return {
+#             "camera_id": camera_id,
+#             "recordings_count": len(recordings),
+#             "recordings": recordings
+#         }
 
-# 녹화 비디오 스트리밍 엔드포인트
-@app.get("/cameras/{camera_id}/recordings/{video_id}")
-async def stream_recording(camera_id: str, video_id: str):
-    """카메라의 녹화 비디오 스트리밍"""
-    # 업로드된 비디오 경로 생성
-    # video_path = os.path.join(VIDEO_STORAGE_PATH, "uploads", f"{video_id}.mp4")
-    video_path = os.path.join(VIDEO_STORAGE_PATH, f"{video_id}.mp4")
+# # 녹화 비디오 스트리밍 엔드포인트
+# @app.get("/cameras/{camera_id}/recordings/{video_id}")
+# async def stream_recording(camera_id: str, video_id: str):
+#     """카메라의 녹화 비디오 스트리밍"""
+#     # 업로드된 비디오 경로 생성
+#     # video_path = os.path.join(VIDEO_STORAGE_PATH, "uploads", f"{video_id}.mp4")
+#     video_path = os.path.join(VIDEO_STORAGE_PATH, f"{video_id}.mp4")
     
-    if not os.path.exists(video_path):
-        raise HTTPException(status_code=404, detail="녹화 비디오를 찾을 수 없습니다")
+#     if not os.path.exists(video_path):
+#         raise HTTPException(status_code=404, detail="녹화 비디오를 찾을 수 없습니다")
     
-    return FileResponse(
-        video_path,
-        media_type="video/mp4",
-        filename=f"recording_{camera_id}_{video_id}.mp4"
-    )
+#     return FileResponse(
+#         video_path,
+#         media_type="video/mp4",
+#         filename=f"recording_{camera_id}_{video_id}.mp4"
+#     )
 
 # 서버 실행 (직접 실행 시)
 if __name__ == "__main__":

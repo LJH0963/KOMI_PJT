@@ -690,6 +690,27 @@ def monitor_cameras(active_cameras):
         # 함수 종료 시 모니터링 상태 비활성화
         st.session_state.is_monitoring = False
 
+
+# 업로드된 영상 목록 가져오기
+async def async_get_video_list():
+    """비동기적으로 업로드된 영상 목록 가져오기"""
+    try:
+        session = await init_session()
+        request_timeout = aiohttp.ClientTimeout(total=2)
+        async with session.get(f"{API_URL}/uploaded_videos_name", timeout=request_timeout) as response:
+            if response.status == 200:
+                video_list = await response.json()
+                return video_list
+            return []
+    except Exception as e:
+        print(f"영상 목록 요청 오류: {str(e)}")
+        return []
+
+# 업로드된 영상 목록 가져오기 (동기 래퍼)
+def get_video_list():
+    """업로드된 영상 목록 가져오기 (동기 래퍼)"""
+    return run_async(async_get_video_list())
+
 # 페이지 관리 함수
 def set_page(page_name, **kwargs):
     """페이지 상태 설정 및 저장"""
@@ -839,6 +860,88 @@ def play_guide_video(exercise):
             else:
                 st.info("측면 영상이 없습니다.")
 
+
+def play_user_video(video_list):
+    """사용자 업로드 영상을 전면/측면으로 구분하여 표시"""
+    # 전면/측면 영상 찾기
+    front_videos = [v for v in video_list if v.startswith('front_')]
+    side_videos = [v for v in video_list if v.startswith('side_')]
+    
+    # 최신 영상 선택 (각 리스트를 정렬하여 첫 번째 항목 선택)
+    front_video = front_videos[0] if front_videos else None
+    side_video = side_videos[0] if side_videos else None
+    
+    if front_video and side_video:
+        # HTML 컴포넌트로 두 영상 동기화 재생
+        front_url = f"{API_URL}/video_uploads/{front_video}"
+        side_url = f"{API_URL}/video_uploads/{side_video}"
+        
+        # HTML과 JavaScript로 동기화된 비디오 재생
+        html_code = f"""
+        <div style="display: flex; justify-content: space-between; width: 100%;">
+            <div style="width: 48%;">
+                <video id="userFrontVideo" width="100%" controls autoplay muted loop>
+                    <source src="{front_url}" type="video/mp4">
+                </video>
+            </div>
+            <div style="width: 48%;">
+                <video id="userSideVideo" width="100%" controls autoplay muted loop>
+                    <source src="{side_url}" type="video/mp4">
+                </video>
+            </div>
+        </div>
+        <script>
+            // 두 비디오 요소 가져오기
+            const userFrontVideo = document.getElementById('userFrontVideo');
+            const userSideVideo = document.getElementById('userSideVideo');
+            
+            // 비디오 반복 시 동기화
+            userFrontVideo.addEventListener('ended', function() {{
+                userFrontVideo.currentTime = 0;
+                userSideVideo.currentTime = 0;
+                userFrontVideo.play();
+                userSideVideo.play();
+            }});
+            
+            // 페이지 로드 시 영상 동시 시작
+            document.addEventListener('DOMContentLoaded', function() {{
+                userFrontVideo.currentTime = 0;
+                userSideVideo.currentTime = 0;
+                userFrontVideo.play();
+                userSideVideo.play();
+            }});
+        </script>
+        """
+        
+        # HTML 컴포넌트 렌더링
+        import streamlit.components.v1 as components
+        components.html(html_code, height=400)
+    
+    else:
+        # 기존 방식으로 가능한 영상 표시
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if front_video:
+                try:
+                    video_url = f"{API_URL}/video_uploads/{front_video}"
+                    st.video(video_url, start_time=0)
+                    st.caption(f"영상 ID: {front_video}")
+                except Exception as e:
+                    st.error(f"전면 영상을 불러올 수 없습니다: {str(e)}")
+            else:
+                st.info("전면 촬영 영상이 없습니다.")
+        
+        with col2:
+            if side_video:
+                try:
+                    video_url = f"{API_URL}/video_uploads/{side_video}"
+                    st.video(video_url, start_time=0)
+                    st.caption(f"영상 ID: {side_video}")
+                except Exception as e:
+                    st.error(f"측면 영상을 불러올 수 없습니다: {str(e)}")
+            else:
+                st.info("측면 촬영 영상이 없습니다.")
 
 # 운동 선택 페이지
 def exercise_select_page():
@@ -998,6 +1101,8 @@ def analysis_result_page():
     # 운동 상세 정보 가져오기
     exercise_id = st.session_state.exercise_id
     exercise = get_exercise_detail(exercise_id)
+    # 업로드된 영상 목록 가져오기
+    video_list = get_video_list()
     
     if not exercise:
         st.error("운동 정보를 가져오는데 실패했습니다.")
@@ -1005,20 +1110,24 @@ def analysis_result_page():
             set_page("exercise_select_page")
         return
     
-    # 헤더 표시
-    st.title(f"{exercise['name']} 가이드")
-    st.text(exercise["description"])
+    if not video_list:
+        st.info("업로드된 영상이 없습니다.")
+        if st.button("운동 선택으로 돌아가기"):
+            set_page("exercise_select_page")
+        return
+    
+    # 영상 시간순 정렬 (최신순)
+    video_list.sort(reverse=True)
     
     # 가이드 영상 표시
     if "guide_videos" in exercise:
-        st.subheader("가이드 영상")
         play_guide_video(exercise)
 
-    else:
-        st.info("이 운동에는 가이드 영상이 없습니다.")
-    
-            
-            
+    # 사용자 영상 표시
+    if video_list:
+        play_user_video(video_list)
+
+
 def exercise_feedback_page():
     """실시간 운동 피드백 페이지"""
     

@@ -652,9 +652,13 @@ def start_video_recording(camera_id, frame_width, frame_height, fps=VIDEO_FPS):
     video_path = os.path.join(VIDEO_OUTPUT_DIR, f"{camera_id}_{timestamp}{VIDEO_FORMAT}")
     
     # OpenCV VideoWriter 생성
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # MP4 코덱
-    video_writer = cv2.VideoWriter(video_path, fourcc, fps, (frame_width, frame_height))
+    # fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # MP4 코덱
+    # fourcc = cv2.VideoWriter_fourcc(*'H264')  # H.264 코덱 (스트림릿 호환)
+    # fourcc = cv2.VideoWriter_fourcc(*'DIVX')
+    # fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+    fourcc = cv2.VideoWriter_fourcc(*'avc1')  # H.264 코덱 (openh264-1.8.0-win64.dll 파일 필요)
     
+    video_writer = cv2.VideoWriter(video_path, fourcc, fps, (frame_width, frame_height))
     if not video_writer.isOpened():
         print(f"카메라 {camera_id} 비디오 녹화 초기화 실패")
         return None
