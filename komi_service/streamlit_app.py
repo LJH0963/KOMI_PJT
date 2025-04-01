@@ -17,13 +17,22 @@ from concurrent.futures import ThreadPoolExecutor
 import queue
 import collections
 import random
+import sys
 
 # 서버 URL 설정
 API_URL = "http://localhost:8000"
 
+# 명령줄 인수에서 서버 URL 확인
+for i in range(len(sys.argv)):
+    if sys.argv[i] == "--server_url" and i + 1 < len(sys.argv):
+        API_URL = sys.argv[i + 1]
+        print(f"명령줄 인수로 서버 URL 설정: {API_URL}")
+        break
+
 # Streamlit의 query parameter를 사용하여 서버 URL을 설정
 if 'server_url' in st.query_params:
     API_URL = st.query_params['server_url']
+    print(f"쿼리 파라미터로 서버 URL 설정: {API_URL}")
 
 # 스레드 안전 데이터 구조
 image_queues = {}  # 카메라별 이미지 큐
