@@ -20,7 +20,7 @@ def prepare_pose_data(pose_data, frame=None, include_image=True):
 
 
 
-class PoseEstimator(YOLO):
+class LivePoseEstimator(YOLO):
     # Yolo Pose 모델 불러오기
     def __init__(self, model_path):
         super().__init__(model_path)
