@@ -3,7 +3,7 @@ import json
 from utils import load_keypoints_from_json, compute_angle, get_point, cosine_similarity
 
 ## 반드시 utils.py 필요!
-class PoseAngleEvaluator:
+class PoseAngleEstimator:
     def __init__(self, answer_dir, target_dir, output_json_path):
         self.answer_dir = answer_dir
         self.target_dir = target_dir
