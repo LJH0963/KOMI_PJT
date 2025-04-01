@@ -3,7 +3,7 @@ import json
 from utils import load_keypoints_from_json, compute_angle, get_point, cosine_similarity
 
 ## 반드시 utils.py 필요!
-class PoseAngleEvaluator:
+class PoseAngleEstimator:
     def __init__(self, answer_dir, target_dir, output_json_path):
         self.answer_dir = answer_dir
         self.target_dir = target_dir
@@ -91,5 +91,5 @@ if __name__ == "__main__":
     target_dir = "C:/Users/user/Desktop/img_output/squat/web/new/front_json"
     output_json_path = "C:/WANTED/LLM/KOMI_PJT/LLM_Project/LJH/output_json/front_pose_angle_eval.json"
 
-    evaluator = PoseAngleEvaluator(answer_dir, target_dir, output_json_path)
+    evaluator = PoseAngleEstimator(answer_dir, target_dir, output_json_path)
     evaluator.evaluate()

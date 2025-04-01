@@ -20,7 +20,7 @@ def prepare_pose_data(pose_data, frame=None, include_image=True):
 
 
 
-class PoseEstimator(YOLO):
+class LivePoseEstimator(YOLO):
     # Yolo Pose 모델 불러오기
     def __init__(self, model_path):
         super().__init__(model_path)
@@ -94,7 +94,7 @@ class PoseEstimator(YOLO):
 # 코드 오류 확인용 실행
 if __name__ == "__main__":
     model_path = "yolo11x-pose.pt"  # YOLO-Pose 설정
-    estimator = PoseEstimator(model_path)
+    estimator = LivePoseEstimator(model_path)
     estimator.start_camera(src=0, width=1280, height=720, fps=30)
     estimator.real_time_video_detecting()
 
