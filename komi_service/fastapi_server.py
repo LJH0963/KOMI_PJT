@@ -15,6 +15,16 @@ import threading
 from contextlib import asynccontextmanager
 import mimetypes
 import shutil
+# LLM 관련 라이브러리 추가
+from langchain_core.prompts import PromptTemplate
+from langchain_core.runnables import RunnableMap, RunnablePassthrough, RunnableLambda
+from langchain_core.output_parsers import StrOutputParser
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_community.vectorstores import Chroma
+import re
+from collections import Counter
+from dotenv import load_dotenv
+load_dotenv()
 
 # MIME 타입 등록
 mimetypes.add_type("video/mp4", ".mp4")
@@ -84,6 +94,157 @@ exercise_data = {
         }
     ]
 }
+
+# ----- LLM 모델 관련 함수 추가 -----
+
+# LLM 설정 함수
+def load_llm():
+    """OpenAI ChatGPT 자동 설정 함수"""
+    return ChatOpenAI(
+        temperature=0,
+        model_name="gpt-4o-mini" 
+    )
+
+def format_docs(docs):
+    """문서들을 하나의문자열로 포맷팅하는 함수"""
+    return "\n\n".join(doc.page_content for doc in docs)
+
+def format_response(text: str) -> str:
+    """모든 출력 텍스트를 가독성 좋게 정리하는 함수"""
+    # 마침표, 물음표, 느낌표 뒤에 줄바꿈 추가
+    lines = re.sub(r'([.!?])\s+', r'\1\n', text.strip())
+    return lines
+
+# 벡터스토어 설정
+def create_vectorstore(pdf_docs_dir="../chroma_db/pdf_docs"):
+    """벡터스토어 생성 또는 로드"""
+    # 디렉토리가 없으면 생성
+    os.makedirs(pdf_docs_dir, exist_ok=True)
+    
+    return Chroma(
+        persist_directory=pdf_docs_dir,
+        embedding_function=OpenAIEmbeddings()
+    )
+
+# 자연어 프롬프트 생성 함수
+def generate_summary_prompt(input_data: dict) -> str:
+    """분석 결과로부터 LLM 프롬프트 생성"""
+    # 문제가 있는 관절 카운트
+    joint_counter = Counter()
+    
+    # 프레임별 분석 결과가 있으면 순회
+    if "frame_results" in input_data:
+        for frame_name, frame_data in input_data["frame_results"].items():
+            # 각도 차이가 15도 이상인 관절 찾기
+            failed_joints = []
+            for key, value in frame_data.items():
+                if key.endswith('_angle_diff') and value is not None and abs(value) >= 15:
+                    failed_joints.append(key)
+                    joint_counter[key] += 1
+    
+    # 관절명 매핑
+    part_names = {
+        # Front view
+        "left_hip_angle_diff": "왼쪽 고관절",
+        "right_hip_angle_diff": "오른쪽 고관절",
+        "left_knee_angle_diff": "왼쪽 무릎",
+        "right_knee_angle_diff": "오른쪽 무릎",
+
+        # Side view
+        "left_shoulder_angle_diff": "왼쪽 어깨",
+        "left_hip_angle_diff": "왼쪽 고관절",
+        "left_knee_angle_diff": "왼쪽 무릎",
+    }
+
+    # 관절별 잘못된 횟수를 텍스트로 나열
+    front_lines = []
+    side_lines = []
+
+    for joint, count in joint_counter.items():
+        name = part_names.get(joint, joint)
+        line = f"- {name}: {count}회"
+        if "angle" in joint and ("left" in joint or "right" in joint):
+            front_lines.append(line)
+        else:
+            side_lines.append(line)
+
+    # 최종 LLM용 프롬프트 생성
+    prompt = "운동 영상에서 다음 부위에 자주 문제가 발생했습니다:\n"
+
+    if front_lines:
+        prompt += "\n[정면 View 기준 문제 부위]\n" + "\n".join(front_lines)
+    if side_lines:
+        prompt += "\n\n[측면 View 기준 문제 부위]\n" + "\n".join(side_lines)
+
+    prompt += (
+        "\n\n이러한 문제가 왜 발생할 수 있는지, 그리고 어떻게 개선하면 좋을지 "
+        "운동 전문가 입장에서 설명해 주세요."
+    )
+    return prompt
+
+# LLM을 사용한 분석 요약 생성 함수
+async def generate_llm_analysis(pose_eval_path: str, output_json_path: str):
+    """LLM을 사용하여 포즈 분석 결과를 해석하고 개선점을 제안"""
+    try:
+        # 1. 포즈 평가 결과 로드
+        with open(pose_eval_path, 'r', encoding='utf-8') as f:
+            pose_data = json.load(f)
+        
+        # 2. 자연어 프롬프트 생성
+        question = generate_summary_prompt(pose_data)
+        
+        # 3. LLM 모델 설정
+        llm = load_llm()
+        
+        # 4. 벡터스토어 설정 및 검색기 생성
+        vectorstore = create_vectorstore()
+        retriever = vectorstore.as_retriever(
+            search_type="similarity",
+            search_kwargs={"k": 5}
+        )
+        
+        # 5. 프롬프트 템플릿 설정
+        prompt_template = PromptTemplate.from_template(
+            "{context}\n\n{question}")
+        
+        # 6. Langchain 설정
+        rag_chain = (
+            RunnableMap({
+                "context": retriever | format_docs,
+                "question": RunnablePassthrough()
+                })
+            | prompt_template
+            | llm
+            | StrOutputParser()
+            | RunnableLambda(format_response)
+        )
+        
+        # 7. LLM 분석 실행
+        llm_response = rag_chain.invoke(question)
+        
+        # 8. 결과 저장
+        result = {
+            "prompt": question,
+            "llm_analysis": llm_response,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        with open(output_json_path, 'w', encoding='utf-8') as f:
+            json.dump(result, f, indent=4, ensure_ascii=False)
+        
+        return result
+    
+    except Exception as e:
+        error_result = {
+            "error": str(e),
+            "message": "LLM 분석 중 오류가 발생했습니다",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        with open(output_json_path, 'w', encoding='utf-8') as f:
+            json.dump(error_result, f, indent=4, ensure_ascii=False)
+        
+        return error_result
 
 # ----- 포즈 평가를 위한 유틸리티 함수 -----
 
@@ -405,7 +566,7 @@ async def run_pose_estimation(image_dir: str, json_dir: str, model_path: str = Y
     
     return analyzed_count
 
-# 영상 분석 처리 함수: 전체 분석 과정 관리
+# 영상 분석 처리 함수: 전체 분석 과정 관리 - LLM 분석 단계 추가
 async def process_video(video_path: str, video_id: str, exercise_id: str = None):
     """
     영상을 처리하고 포즈를 분석하는 전체 과정을 관리하는 함수
@@ -432,6 +593,7 @@ async def process_video(video_path: str, video_id: str, exercise_id: str = None)
     image_dir = os.path.join(analysis_dir, "images")
     json_dir = os.path.join(analysis_dir, "json")
     pose_eval_path = os.path.join(analysis_dir, "pose_angle_eval.json")
+    llm_result_path = os.path.join(analysis_dir, "analysis_result.json")
     
     # 디렉토리 초기화
     if os.path.exists(analysis_dir):
@@ -449,13 +611,17 @@ async def process_video(video_path: str, video_id: str, exercise_id: str = None)
             # 3. 포즈 각도 평가
             pose_eval_result = await evaluate_pose_angles(json_dir, exercise_id, pose_eval_path)
             
-            # 4. 결과 요약 정보 생성
+            # 4. LLM 분석 추가
+            llm_analysis_result = await generate_llm_analysis(pose_eval_path, llm_result_path)
+            
+            # 5. 결과 요약 정보 생성
             summary = {
                 "video_id": video_id,
                 "exercise_id": exercise_id,
                 "frame_count": frame_count,
                 "analyzed_count": analyzed_count,
                 "pose_evaluation": pose_eval_result,
+                "llm_analysis_available": True,
                 "timestamp": datetime.now().isoformat(),
                 "status": "completed"
             }
@@ -479,7 +645,7 @@ async def process_video(video_path: str, video_id: str, exercise_id: str = None)
         }
         
         with open(os.path.join(analysis_dir, "analysis_error.json"), 'w', encoding='utf-8') as ef:
-            json.dump(error_info, ef, indent=4)
+            json.dump(error_info, ef, indent=4, ensure_ascii=False)
         
         return error_info
 
@@ -1241,22 +1407,49 @@ async def get_video_analysis_result(video_id: str):
     # 요약 파일 확인
     summary_path = os.path.join(analysis_dir, "analysis_summary.json")
     error_path = os.path.join(analysis_dir, "analysis_error.json")
+    result_path = os.path.join(analysis_dir, "analysis_result.json")
+    pose_eval_path = os.path.join(analysis_dir, "pose_angle_eval.json")
     
+    # 결과 객체 초기화
+    response = {
+        "video_id": video_id,
+        "status": "unknown"
+    }
+    
+    # 에러 정보가 있는 경우
+    if os.path.exists(error_path):
+        with open(error_path, 'r', encoding='utf-8') as f:
+            error_info = json.load(f)
+        response.update(error_info)
+        response["status"] = "failed"
+        return response
+    
+    # 요약 정보가 있는 경우
     if os.path.exists(summary_path):
         with open(summary_path, 'r', encoding='utf-8') as f:
             summary = json.load(f)
-        return summary
-    elif os.path.exists(error_path):
-        with open(error_path, 'r', encoding='utf-8') as f:
-            error_info = json.load(f)
-        return error_info
+        response.update(summary)
+    
+    # 포즈 평가 결과가 있는 경우
+    if os.path.exists(pose_eval_path):
+        with open(pose_eval_path, 'r', encoding='utf-8') as f:
+            pose_data = json.load(f)
+        response["pose_evaluation_details"] = pose_data.get("summary", {})
+    
+    # LLM 분석 결과가 있는 경우
+    if os.path.exists(result_path):
+        with open(result_path, 'r', encoding='utf-8') as f:
+            llm_result = json.load(f)
+        response["llm_analysis"] = llm_result
+        response["status"] = "completed"
     else:
-        # 처리 중이거나 결과가 없는 경우
-        return {
-            "video_id": video_id,
-            "status": "processing",
-            "message": "분석이 진행 중이거나 아직 결과가 없습니다."
-        }
+        # LLM 분석 결과가 없는 경우
+        response["llm_analysis_available"] = False
+        response["status"] = "processing"
+        response["message"] = "LLM 분석이 진행 중이거나 아직 결과가 없습니다."
+    
+    return response
+        
 
 # # 녹화 목록 조회 엔드포인트
 # @app.get("/cameras/{camera_id}/recordings")

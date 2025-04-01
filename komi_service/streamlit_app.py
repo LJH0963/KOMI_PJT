@@ -952,6 +952,47 @@ def play_user_video(video_list):
             else:
                 st.info("측면 촬영 영상이 없습니다.")
 
+# 비동기 분석 결과 요청 함수
+async def async_get_analysis_result(video_id: str):
+    """비동기적으로 분석 결과를 가져오기"""
+    try:
+        session = await init_session()
+        request_timeout = aiohttp.ClientTimeout(total=5)  # 분석 결과 요청은 조금 더 긴 타임아웃 설정
+        async with session.get(f"{API_URL}/analysis/video/{video_id}", timeout=request_timeout) as response:
+            if response.status == 200:
+                data = await response.json()
+                return data
+            elif response.status == 404:
+                return {"status": "not_found", "message": "분석 결과를 찾을 수 없습니다."}
+            else:
+                return {"status": "error", "message": f"오류 발생: {response.status}"}
+    except Exception as e:
+        print(f"분석 결과 요청 오류: {str(e)}")
+        return {"status": "error", "message": f"요청 오류: {str(e)}"}
+
+# 동기 분석 결과 요청 래퍼
+def get_analysis_result(video_id: str):
+    """분석 결과 가져오기 (동기 래퍼)"""
+    return run_async(async_get_analysis_result(video_id))
+
+# 비동기 영상 분석 요청 함수
+async def async_request_video_analysis(video_id: str, exercise_id: str = None):
+    """비동기적으로 영상 분석을 요청"""
+    try:
+        session = await init_session()
+        params = {}
+        if exercise_id:
+            params["exercise_id"] = exercise_id
+            
+        async with session.post(f"{API_URL}/videos/{video_id}/analyze", json=params) as response:
+            if response.status == 200:
+                return await response.json()
+            return {"status": "error", "message": f"오류 발생: {response.status}"}
+    except Exception as e:
+        print(f"영상 분석 요청 오류: {str(e)}")
+        return {"status": "error", "message": f"요청 오류: {str(e)}"}
+
+
 # 운동 선택 페이지
 def exercise_select_page():
     """메인 페이지 - 운동 선택 화면"""
@@ -1135,6 +1176,73 @@ def analysis_result_page():
     # 사용자 영상 표시
     if video_list:
         play_user_video(video_list)
+        
+        # 분석할 영상 선택
+        st.subheader("자세 분석 결과")
+        
+        # 분석 대상 영상 추출 (전면/측면)
+        front_videos = [v for v in video_list if v.startswith('front_')]
+        side_videos = [v for v in video_list if v.startswith('side_')]
+        
+        # 가장 최근 영상 선택
+        selected_video_id = None
+        if front_videos:
+            selected_video_id = front_videos[0].split('.')[0]  # .mp4 확장자 제거
+        elif side_videos:
+            selected_video_id = side_videos[0].split('.')[0]  # .mp4 확장자 제거
+        
+        if not selected_video_id:
+            st.warning("분석할 영상을 찾을 수 없습니다.")
+            return
+            
+        # 로딩 상태 표시
+        with st.spinner("분석 결과를 가져오는 중..."):
+            analysis_result = get_analysis_result(selected_video_id)
+        
+        # 결과 상태에 따른 표시
+        if analysis_result.get("status") == "error" or analysis_result.get("status") == "not_found":
+            st.error(analysis_result.get("message", "분석 결과를 가져오는데 실패했습니다."))
+            # 재분석 버튼
+            if st.button("영상 재분석"):
+                with st.spinner("영상 분석 요청 중..."):
+                    response = run_async(async_request_video_analysis(selected_video_id, exercise_id))
+                    if response and response.get("status") == "processing":
+                        st.success("분석이 시작되었습니다. 잠시 후 다시 확인해주세요.")
+                    else:
+                        st.error("분석 요청에 실패했습니다.")
+        elif analysis_result.get("status") == "processing":
+            st.info("분석이 진행 중입니다. 잠시 후 다시 확인해주세요.")
+            # 새로고침 버튼
+            if st.button("새로고침"):
+                st.rerun()
+        else:
+            # 분석 결과 표시 - 요약 정보
+            if "pose_evaluation_details" in analysis_result:
+                eval_details = analysis_result["pose_evaluation_details"]
+                # 유사도 점수 표시
+                similarity = eval_details.get("average_similarity", 0) * 100  # 0~1 값을 백분율로 변환
+                
+                # 평가 결과 시각화
+                st.subheader("자세 유사도 평가")
+                
+                # 진행 바로 유사도 표시
+                st.progress(similarity / 100)
+                
+                # 색상으로 등급 표시
+                if similarity >= 80:
+                    st.success(f"자세 일치도: {similarity:.1f}% (우수)")
+                elif similarity >= 60:
+                    st.warning(f"자세 일치도: {similarity:.1f}% (보통)")
+                else:
+                    st.error(f"자세 일치도: {similarity:.1f}% (개선 필요)")
+            
+            # LLM 분석 결과 표시
+            if "llm_analysis" in analysis_result and "llm_analysis" in analysis_result["llm_analysis"]:
+                st.subheader("AI 운동 코치 분석")
+                llm_text = analysis_result["llm_analysis"]["llm_analysis"]
+
+                with st.container():
+                    st.info(llm_text)
 
 
 def exercise_feedback_page():
