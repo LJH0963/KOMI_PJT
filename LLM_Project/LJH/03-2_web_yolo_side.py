@@ -73,7 +73,7 @@ def overlay_mask(frame, mask, alpha_value=100):
     mask_resized = cv2.resize(mask, (frame.shape[1], frame.shape[0]))
     
     # 마스크 반전 적용(왼쪽 위주로 찍히게끔)
-    mask_resized = cv2.flip(mask_resized, 1)
+    # mask_resized = cv2.flip(mask_resized, 1)
     mask_rgb = mask_resized[:, :, :3].astype(np.uint8)
     mask_alpha = mask_resized[:, :, 3].astype(np.uint8)
     object_mask = (mask_alpha > 0).astype(np.uint8)
