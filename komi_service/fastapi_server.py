@@ -93,6 +93,33 @@ exercise_data = {
                 "front": "/lunge/front.mp4",
                 "side": "/lunge/side.mp4"
             }
+        },
+        {
+            "id": "plank",
+            "name": "플랭크",
+            "description": "코어 근육 강화 운동",
+            "guide_videos": {
+                "front": "/plank/front.mp4",
+                "side": "/plank/side.mp4"
+            }
+        },
+        {
+            "id": "pullup",
+            "name": "풀업",
+            "description": "등과 팔 근육 발달 운동",
+            "guide_videos": {
+                "front": "/pullup/front.mp4",
+                "side": "/pullup/side.mp4"
+            }
+        },
+        {
+            "id": "situp",
+            "name": "싯업",
+            "description": "복근 집중 운동",
+            "guide_videos": {
+                "front": "/situp/front.mp4",
+                "side": "/situp/side.mp4"
+            }
         }
     ]
 }

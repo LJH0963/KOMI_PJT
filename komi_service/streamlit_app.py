@@ -1,7 +1,7 @@
 import streamlit as st
 
 # 페이지 설정
-st.set_page_config(page_title="KOMI 모니터링", layout="wide")
+st.set_page_config(page_title="KOMI 모니터링", layout="wide", page_icon='statics/komi_logo.png')
 
 import json
 import time
@@ -996,7 +996,8 @@ async def async_request_video_analysis(video_id: str, exercise_id: str = None):
 # 운동 선택 페이지
 def exercise_select_page():
     """메인 페이지 - 운동 선택 화면"""
-    st.title("KOMI 재활 운동 보조 시스템")
+    st.title("KOMI")
+    st.subheader("AI기반 원격 재활 프로그램")
     
     # 운동 목록 가져오기
     exercise_data = get_exercises()
@@ -1008,8 +1009,8 @@ def exercise_select_page():
             st.rerun()
         return
     
-    # 운동 선택 화면 구성
-    st.subheader("운동을 선택하세요")
+    # # 운동 선택 화면 구성
+    # st.subheader("운동을 선택하세요")
     
     # 그리드 레이아웃 시작
     cols = st.columns(3)
@@ -1018,6 +1019,12 @@ def exercise_select_page():
     for i, exercise in enumerate(exercise_data["exercises"]):
         with cols[i % 3]:
             st.subheader(exercise["name"])
+            image_path = f"statics/images/{exercise['id']}.png"  # 이미지 폴더에 저장된 파일 
+            try:
+                st.image(image_path, use_container_width =True)
+            except:
+                # 이미지 로드 실패 시 기본 이미지 표시
+                st.image("statics/komi_logo.png", use_container_width =True)
             st.text(exercise["description"])
             
             # 버튼 클릭 시 운동 가이드 페이지로 이동
@@ -1055,17 +1062,26 @@ def exercise_guide_page():
             set_page("exercise_select_page")
         return
     
-    # 헤더 표시
+    # col1, col2, _ = st.columns(spec=[0.5, 0.2, 0.3])
+    # with col1:
+    #     # 헤더 표시
+    #     st.title(f"{exercise['name']} 가이드")
+    #     st.text(exercise["description"])
+            
+    # with col2:
+    #     st.image("statics/komi_banner.png", use_container_width=False, width=200)
+
     st.title(f"{exercise['name']} 가이드")
     st.text(exercise["description"])
-    
+        
     # 가이드 영상 표시
     if "guide_videos" in exercise:
         st.subheader("가이드 영상")
         play_guide_video(exercise)
-
     else:
         st.info("이 운동에는 가이드 영상이 없습니다.")
+
+
 
 
 def posture_analysis_page():
