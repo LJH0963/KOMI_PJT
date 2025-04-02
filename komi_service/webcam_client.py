@@ -1184,14 +1184,14 @@ def check_similar_pose(frame, camera_id=None):
 
 # 프레임 후처리 함수
 def post_process_mask(frame, camera_id=None):
-    """프레임 후처리 (상태에 따라 다른 처리)"""
+    """프레임 후처리 - MASK"""
     mask_image_path = f'data/squat/{camera_id}_frame_000_mask.png'
     mask = cv2.imread(mask_image_path, cv2.IMREAD_UNCHANGED)
     return overlay_mask(frame, mask)
 
 
 def post_process_record(frame, camera_id=None, remaining=0):
-    """프레임 후처리 (상태에 따라 다른 처리)"""
+    """프레임 후처리 - countdown and record"""
     if remaining > 0:
         return overlay_countdown(frame, remaining)
     elif remaining > -2.9:
@@ -1206,10 +1206,12 @@ def post_process_record(frame, camera_id=None, remaining=0):
             video_recorders[camera_id]["writer"].write(frame)
     return frame
 
+cnt_tmp_test_2 = True
 def post_process_detect(frame, camera_id=None, threshold_px=20):
     """
-    포즈 감지 후처리 - 가장 유사한 포즈와 비교하여 문제 지점 시각화
-    중요한 키포인트만 출력
+    포즈 감지 후처리
+    - 가장 유사한 포즈와 비교하여 문제 지점 시각화(중요한 키포인트만 출력)
+    - 포즈 분석 피드백 텍스트 출력
     
     Args:
         frame: 입력 영상 프레임
@@ -1223,6 +1225,9 @@ def post_process_detect(frame, camera_id=None, threshold_px=20):
     frame = cv2.flip(frame, 1)
     direction = camera_id if camera_id in ['front', 'side'] else 'front'
     result_frame = frame.copy()
+    
+    if direction == 'side':
+        threshold_px=25
     
     try:
         # 프레임에서 포즈 감지
@@ -1257,6 +1262,11 @@ def post_process_detect(frame, camera_id=None, threshold_px=20):
         reference_file_path = f'data/squat/{direction}_json/{best_match_filename}'
         with open(reference_file_path, 'r') as f:
             reference_data = json.load(f)
+        
+        global cnt_tmp_test_2
+        if cnt_tmp_test_2:
+            cnt_tmp_test_2 = False
+            print(f"포즈 감지 처리 완료: {reference_file_path}")
         
         # 기준 포즈의 키포인트 추출
         reference_keypoints = []
@@ -1306,7 +1316,6 @@ def post_process_detect(frame, camera_id=None, threshold_px=20):
                 color=(0, 0, 255), 
                 thickness=8
             )
-        
         return result_frame
         
     except Exception as e:
@@ -1363,7 +1372,6 @@ async def process_frame_by_status(camera_id, frame, timestamp, status, quality=8
                 asyncio.create_task(upload_video_to_server(camera_id, video_path, duration))
             remaining = -3.0  # 녹화 종료 표시
         
-        # 후처리 수행
         result_frame = post_process_record(result_frame, camera_id=camera_id, remaining=remaining)
 
     
