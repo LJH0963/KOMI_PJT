@@ -996,9 +996,16 @@ async def async_request_video_analysis(video_id: str, exercise_id: str = None):
 # 운동 선택 페이지
 def exercise_select_page():
     """메인 페이지 - 운동 선택 화면"""
-    st.title("KOMI")
-    st.subheader("AI기반 원격 재활 프로그램")
+
     
+    col1, _, col3 = st.columns(spec=[0.5, 0.2, 0.3])
+    with col1:
+        # 헤더 표시
+        st.title("KOMI")
+        st.subheader("AI기반 원격 재활 프로그램")
+            
+    with col3:
+        st.image("statics/komi_banner.png", use_container_width=False, width=200)
     # 운동 목록 가져오기
     exercise_data = get_exercises()
     
@@ -1038,42 +1045,34 @@ def exercise_guide_page():
     # 선택된 운동 ID 확인
     if "exercise_id" not in st.session_state:
         st.error("선택된 운동이 없습니다.")
-        if st.button("운동 선택으로 돌아가기"):
+        if st.button("운동 선택으로 돌아가기", key="exercise_select_btn"):
             set_page("exercise_select_page")
         return
     
     exercise_id = st.session_state.exercise_id
-    
-    # 네비게이션 버튼
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("운동 선택으로 돌아가기"):
-            set_page("exercise_select_page")
-    with col2:
-        if st.button("자세 정밀 분석"):
-            set_page("posture_analysis_page", exercise_id=exercise_id)
     
     # 운동 상세 정보 가져오기
     exercise = get_exercise_detail(exercise_id)
     
     if not exercise:
         st.error("운동 정보를 가져오는데 실패했습니다.")
-        if st.button("운동 선택으로 돌아가기"):
+        if st.button("운동 선택으로 돌아가기", key="exercise_select_btn"):
             set_page("exercise_select_page")
         return
     
-    # col1, col2, _ = st.columns(spec=[0.5, 0.2, 0.3])
-    # with col1:
-    #     # 헤더 표시
-    #     st.title(f"{exercise['name']} 가이드")
-    #     st.text(exercise["description"])
+    col1, _, col3 = st.columns(spec=[0.5, 0.2, 0.3])
+    with col1:
+        # 헤더 표시
+        st.title(f"{exercise['name']} 가이드")
+        if st.button("운동 선택으로 돌아가기", key="exercise_select_btn"):
+            set_page("exercise_select_page")
+        if st.button("자세 정밀 분석", key="posture_analysis_btn"):
+            set_page("posture_analysis_page", exercise_id=exercise_id)
+        st.text(exercise["description"])
             
-    # with col2:
-    #     st.image("statics/komi_banner.png", use_container_width=False, width=200)
+    with col3:
+        st.image("statics/komi_banner.png", use_container_width=False, width=200)
 
-    st.title(f"{exercise['name']} 가이드")
-    st.text(exercise["description"])
-        
     # 가이드 영상 표시
     if "guide_videos" in exercise:
         st.subheader("가이드 영상")
@@ -1082,31 +1081,23 @@ def exercise_guide_page():
         st.info("이 운동에는 가이드 영상이 없습니다.")
 
 
-
-
 def posture_analysis_page():
     """자세 정밀 분석 페이지"""
     global thread_camera_list
     st.session_state.cameras = get_cameras()
     
-    # 네비게이션 버튼    
-    col1, col2 = st.columns(2)
+    col1, _, col3 = st.columns(spec=[0.5, 0.2, 0.3])
     with col1:
-        if st.button("운동 가이드로 돌아가기"):
-        # if st.button("운동 가이드로 돌아가기", key="analysis_back_btn"):
-            # # 모니터링 상태 비활성화 후 페이지 전환
-            # st.session_state.is_monitoring = False
-            # thread_camera_list.clear()  # 전역 변수 초기화
-            set_page("exercise_guide_page")
-    with col2:
+        st.title("자세 정밀 분석")
+        if st.button("운동 가이드로 돌아가기", key="exercise_guide_btn"):
+            set_page("exercise_guide_page")    
         if st.button("결과 보기", key="view_result_btn"):
-        # if st.button("결과 보기", key="view_result_btn"):
-            # # 모니터링 상태 비활성화 후 페이지 전환
-            # st.session_state.is_monitoring = False
-            # thread_camera_list.clear()  # 전역 변수 초기화
             set_page("analysis_result_page")
-            
-    st.title("자세 정밀 분석")
+        st.text("")
+
+    with col3:
+        st.image("statics/komi_banner.png", use_container_width=False, width=200)
+
     # 카메라 목록이 없으면 표시 후 종료
     if not st.session_state.cameras:
         st.info("연결된 카메라가 없습니다")
@@ -1150,19 +1141,20 @@ def posture_analysis_page():
     monitor_cameras(active_cameras)
 
 
+
 def analysis_result_page():
     """분석 결과 페이지"""
     
-    # 네비게이션 버튼    
-    col1, col2 = st.columns(2)
+    col1, _, col3 = st.columns(spec=[0.5, 0.2, 0.3])
     with col1:
-        if st.button("자세 정밀 분석으로 돌아가기"):
+        st.title("분석 결과")
+        if st.button("자세 정밀 분석으로 돌아가기", key="posture_analysis_btn"):
             set_page("posture_analysis_page")
-    with col2:
-        if st.button("실시간 운동 피드백"):
+        if st.button("실시간 운동 피드백", key="exercise_feedback_btn"):
             set_page("exercise_feedback_page")
-            
-    st.title("분석 결과")
+    
+    with col3:
+        st.image("statics/komi_banner.png", use_container_width=False, width=200)
     
     # 운동 상세 정보 가져오기
     exercise_id = st.session_state.exercise_id
@@ -1172,13 +1164,13 @@ def analysis_result_page():
     
     if not exercise:
         st.error("운동 정보를 가져오는데 실패했습니다.")
-        if st.button("운동 선택으로 돌아가기"):
+        if st.button("운동 선택으로 돌아가기", key="exercise_select_btn"):
             set_page("exercise_select_page")
         return
     
     if not video_list:
         st.info("업로드된 영상이 없습니다.")
-        if st.button("운동 선택으로 돌아가기"):
+        if st.button("운동 선택으로 돌아가기", key="exercise_select_btn"):
             set_page("exercise_select_page")
         return
     
@@ -1264,16 +1256,17 @@ def analysis_result_page():
 def exercise_feedback_page():
     """실시간 운동 피드백 페이지"""
     
-    # 네비게이션 버튼    
-    col1, col2 = st.columns(2)
+    col1, _, col3 = st.columns(spec=[0.5, 0.2, 0.3])
     with col1:
-        if st.button("분석 결과로 돌아가기"):
+        st.title("실시간 운동 피드백")
+        if st.button("분석 결과로 돌아가기", key="analysis_result_btn"):
             set_page("analysis_result_page")
-    with col2:
-        if st.button("운동 선택으로 돌아가기"):
+        if st.button("운동 선택으로 돌아가기", key="exercise_select_btn"):
             set_page("exercise_select_page")
-            
-    st.title("실시간 운동 피드백")
+    
+    with col3:
+        st.image("statics/komi_banner.png", use_container_width=False, width=200)            
+
     # 카메라 목록이 없으면 표시 후 종료
     if not st.session_state.cameras:
         st.info("연결된 카메라가 없습니다")
