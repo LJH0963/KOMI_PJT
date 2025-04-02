@@ -897,67 +897,98 @@ def overlay_countdown(frame, remaining):
 
 
 cnt_tmp_test = 0
-def is_pose_similar_by_accuracy(
-    current_pose,
-    camera_id,
-    threshold_px=20,
-    ratio=0.7
-):
-    """정확도 기반 포즈 유사성 판단 함수"""
-    reference_pose = REFERENCE_POSE[camera_id]
-    if not len(current_pose) or not len(reference_pose):
+def is_pose_similar_by_accuracy(current_pose, camera_id, threshold_px=20, ratio=0.7):
+    try:
+        reference_pose = REFERENCE_POSE[camera_id]
+        
+        # 입력 검증
+        if current_pose is None or len(current_pose) == 0:
+            return False
+            
+        if reference_pose is None or len(reference_pose) == 0:
+            return False
+            
+        # 배열 크기 확인
+        if len(current_pose) != len(reference_pose):
+            print(f"포즈 배열 크기 불일치: current={len(current_pose)}, reference={len(reference_pose)}")
+            return False
+            
+        match_count = 0
+        total_count = 0
+        
+        for i in range(len(reference_pose)):
+            try:
+                ref = reference_pose[i]
+                cur = current_pose[i]
+                
+                if ref[0] is None or cur[0] is None:
+                    continue
+                    
+                if np.isnan(cur[0]) or np.isnan(cur[1]):
+                    continue
+                    
+                dist = np.linalg.norm(np.array(ref) - np.array(cur))
+                total_count += 1
+                if dist <= threshold_px:
+                    match_count += 1
+                    
+            except Exception as e:
+                print(f"키포인트 {i} 비교 중 오류: {str(e)}")
+                continue
+                
+        if total_count == 0:
+            return False
+            
+        global cnt_tmp_test
+        cnt_tmp_test += 1
+        if cnt_tmp_test % 30 == 0:
+            print(f"정확도: {match_count / total_count:.2f}")
+            print(datetime.now())
+            
+        return (match_count / total_count) >= ratio
+        
+    except Exception as e:
+        print(f"포즈 유사도 계산 중 오류: {str(e)}")
         return False
-    match_count = 0
-    total_count = 0
-    for i in range(len(reference_pose)):
-        ref = reference_pose[i]
-        cur = current_pose[i]
-        if ref[0] is not None and cur[0] is not None:
-            dist = np.linalg.norm(np.array(ref) - np.array(cur))
-            # print(dist)
-            total_count += 1
-            if dist <= threshold_px:
-                match_count += 1
-    if total_count == 0:
-        return False
-    global cnt_tmp_test
-    cnt_tmp_test += 1
-    if cnt_tmp_test % 30 == 0:
-        # print("ref:\n", reference_pose)
-        # print("cur:\n", current_pose)
-        print(match_count / total_count)
-        print(datetime.now())
-    return (match_count / total_count) >= ratio
 
 
 def check_pose_alignment(frame, yolo_model, camera_id):
-    """포즈 정렬 확인 함수"""
-    # 프레임에서 포즈 감지
-    results = yolo_model.predict(source=frame, stream=False, verbose=False)
-    keypoints = None
-    
-    # 감지된 키포인트 추출
-    for result in results:
-        if result.keypoints is not None:
-            keypoints_np = result.keypoints.xy.cpu().numpy()
-            keypoints = keypoints_np[0]
-            break
-    
-    # 키포인트가 감지되었으면 유사도 확인
-    if keypoints is not None:
+    try:
+        results = yolo_model.predict(source=frame, stream=False, verbose=False)
+        if not results or len(results) == 0:
+            return False
+            
+        result = results[0]
+        if not hasattr(result, 'keypoints') or result.keypoints is None:
+            return False
+            
+        keypoints_data = result.keypoints.xy
+        if len(keypoints_data) == 0:
+            return False
+            
+        try:
+            keypoints = keypoints_data[0].cpu().numpy()
+        except IndexError:
+            return False
+            
+        if len(keypoints) == 0:
+            return False
+            
         keypoints_array = np.array(keypoints, dtype=np.float32)
-        return is_pose_similar_by_accuracy(keypoints_array, camera_id)  # 기준 포즈와 유사한지 확인하여 결과 반환
-
-    return False
+        return is_pose_similar_by_accuracy(keypoints_array, camera_id)
+        
+    except Exception as e:
+        print(f"포즈 정렬 확인 중 오류: {str(e)}")
+        return False
 
 def analyze_pose(keypoints: np.ndarray) -> list[str]:
     """
     YOLO 기반 키포인트 배열을 받아 스쿼트 동작을 분석하고 피드백 제공
-    Args:
-        keypoints (np.ndarray): [17 x 2] 형태의 좌표 배열
-    Returns:
-        tuple: (관절 각도 딕셔너리, 피드백 리스트)
     """
+    # 입력 검증 강화
+    if keypoints is None or not isinstance(keypoints, np.ndarray) or keypoints.size == 0:
+        return ["포즈가 감지되지 않았습니다."]
+    
     # 주요 관절 인덱스
     p_idx = {
         "l_shoulder": 5, "r_shoulder": 6,
@@ -967,73 +998,118 @@ def analyze_pose(keypoints: np.ndarray) -> list[str]:
     }
 
     def get_point(name):
-        i = p_idx.get(name)
-        if i is None or i >= len(keypoints):
+        try:
+            i = p_idx.get(name)
+            if i is None or i >= len(keypoints):
+                return None
+            x, y = keypoints[i]
+            if np.isnan(x) or np.isnan(y):
+                return None
+            return np.array([float(x), float(y)])
+        except (IndexError, ValueError, TypeError) as e:
+            print(f"키포인트 추출 중 오류 발생: {str(e)}")
             return None
-        x, y = keypoints[i]
-        return np.array([x, y]) if not np.isnan(x) and not np.isnan(y) else None
 
     def compute_angle(p1, p2, p3):
-        if p1 is None or p2 is None or p3 is None:
-            return None
-        
-        v1, v2 = p1 - p2, p3 - p2
-        norm1, norm2 = np.linalg.norm(v1), np.linalg.norm(v2)
-        if norm1 == 0 or norm2 == 0:
+        try:
+            if any(p is None for p in [p1, p2, p3]):
+                return None
+            
+            v1, v2 = p1 - p2, p3 - p2
+            norm1, norm2 = np.linalg.norm(v1), np.linalg.norm(v2)
+            
+            if norm1 < 1e-10 or norm2 < 1e-10:  # 거의 0에 가까운 경우 체크
+                return None
+
+            cosine = np.dot(v1, v2) / (norm1 * norm2)
+            return np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0)))
+        except (ValueError, TypeError, ZeroDivisionError) as e:
+            print(f"각도 계산 중 오류 발생: {str(e)}")
             return None
 
-        cosine = np.dot(v1, v2) / (norm1 * norm2)
-        return np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0)))
+    def safe_vector_operation(p1, p2, operation="distance"):
+        try:
+            if p1 is None or p2 is None:
+                return None
+            if not isinstance(p1, np.ndarray) or not isinstance(p2, np.ndarray):
+                return None
+            if p1.size == 0 or p2.size == 0:
+                return None
+            if p1.shape != (2,) or p2.shape != (2,):  # 2D 포인트 확인
+                return None
+                
+            if operation == "distance":
+                diff = p2 - p1
+                if diff.size == 0:
+                    return None
+                return float(np.linalg.norm(diff))
+            elif operation == "midpoint":
+                return (p1 + p2) / 2
+            return None
+        except (ValueError, TypeError) as e:
+            print(f"벡터 연산 중 오류 발생: {str(e)}")
+            return None
 
-    l_sh, r_sh, l_hip, r_hip, l_knee, r_knee, l_ankle, r_ankle = map(get_point, ["l_shoulder", "r_shoulder", "l_hip", "r_hip", "l_knee", "r_knee", "l_ankle", "r_ankle"])
+    # 포인트 가져오기
+    points = {name: get_point(name) for name in p_idx.keys()}
+    
+    # 모든 포인트가 None인 경우 early return
+    if all(p is None for p in points.values()):
+        return ["포즈가 제대로 감지되지 않았습니다. 카메라 위치를 조정해주세요."]
 
     # 관절 각도 계산
-    angles = {
-        "left_hip_angle": compute_angle(l_sh, l_hip, l_knee),
-        "right_hip_angle": compute_angle(r_sh, r_hip, r_knee),
-        "left_knee_angle": compute_angle(l_hip, l_knee, l_ankle),
-        "right_knee_angle": compute_angle(r_hip, r_knee, r_ankle),
-    }
-
-    # 척추 각도, 거리 정보
-    if l_sh is not None and r_sh is not None and l_hip is not None and r_hip is not None:
-        mid_sh, mid_hip = (l_sh + r_sh) / 2, (l_hip + r_hip) / 2
-        vertical = mid_hip + np.array([0, -100])
-        if mid_sh is not None and mid_hip is not None and vertical is not None:
-            angles["back_angle"] = compute_angle(mid_sh, mid_hip, vertical)
+    angles = {}
     
-    if l_sh is not None and r_sh is not None:
-        angles["shoulder_width"] = np.linalg.norm(l_sh - r_sh)
-    
-    if l_hip is not None and r_hip is not None:
-        angles["hip_width"] = np.linalg.norm(l_hip - r_hip)
-    
-    if l_knee is not None and r_knee is not None:
-        angles["knee_to_knee_distance"] = np.linalg.norm(l_knee - r_knee)
+    # 안전하게 각도 계산
+    try:
+        angles["left_hip_angle"] = compute_angle(points["l_shoulder"], points["l_hip"], points["l_knee"])
+        angles["right_hip_angle"] = compute_angle(points["r_shoulder"], points["r_hip"], points["r_knee"])
+        angles["left_knee_angle"] = compute_angle(points["l_hip"], points["l_knee"], points["l_ankle"])
+        angles["right_knee_angle"] = compute_angle(points["r_hip"], points["r_knee"], points["r_ankle"])
+        
+        # 어깨와 엉덩이 너비 계산
+        if all(points[p] is not None for p in ["l_shoulder", "r_shoulder"]):
+            angles["shoulder_width"] = safe_vector_operation(points["l_shoulder"], points["r_shoulder"], "distance")
+        
+        if all(points[p] is not None for p in ["l_hip", "r_hip"]):
+            angles["hip_width"] = safe_vector_operation(points["l_hip"], points["r_hip"], "distance")
+        
+        # 무릎 간격 계산
+        if all(points[p] is not None for p in ["l_knee", "r_knee"]):
+            angles["knee_to_knee_distance"] = safe_vector_operation(points["l_knee"], points["r_knee"], "distance")
+        
+        # 척추 각도 계산
+        if all(points[p] is not None for p in ["l_shoulder", "r_shoulder", "l_hip", "r_hip"]):
+            mid_sh = safe_vector_operation(points["l_shoulder"], points["r_shoulder"], "midpoint")
+            mid_hip = safe_vector_operation(points["l_hip"], points["r_hip"], "midpoint")
+            if mid_sh is not None and mid_hip is not None:
+                vertical = mid_hip + np.array([0, -100])
+                angles["back_angle"] = compute_angle(mid_sh, mid_hip, vertical)
+    except Exception as e:
+        print(f"각도 계산 중 오류 발생: {str(e)}")
+        return ["포즈 분석 중 오류가 발생했습니다."]
 
     # 피드백 생성
     feedback = []
+    
+    # 각도가 계산되지 않은 경우 기본 메시지 추가
+    if not angles:
+        return ["자세가 정확하게 감지되지 않았습니다. 카메라 앞에서 전신이 보이도록 서주세요."]
 
-    # 무릎 각도 확인 (100 > 각도 > 90인 경우)
-    left_knee = angles.get("left_knee_angle")
-    right_knee = angles.get("right_knee_angle")
-    if ((left_knee is not None and 100 > left_knee > 90) or 
-        (right_knee is not None and 100 > right_knee > 90)):
-        feedback.append("조금 더 앉아주세요.")
-
-    # 고관절 각도 확인 (130 > 각도 > 120인 경우)
-    left_hip = angles.get("left_hip_angle")
-    right_hip = angles.get("right_hip_angle")
-    if ((left_hip is not None and 130 > left_hip > 120) or 
-        (right_hip is not None and 130 > right_hip > 120)):
-        feedback.append("엉덩이를 더 낮춰보세요.")
-
-    # 허리 각도 확인
-    back_angle = angles.get("back_angle")
-    if back_angle is not None and back_angle < 70:
+    # 기존 피드백 로직
+    if angles.get("left_knee_angle") is not None and 100 > angles["left_knee_angle"] > 90:
+        feedback.append("왼쪽 무릎을 더 굽혀주세요.")
+    if angles.get("right_knee_angle") is not None and 100 > angles["right_knee_angle"] > 90:
+        feedback.append("오른쪽 무릎을 더 굽혀주세요.")
+    
+    if angles.get("left_hip_angle") is not None and 130 > angles["left_hip_angle"] > 120:
+        feedback.append("왼쪽 엉덩이를 더 낮춰보세요.")
+    if angles.get("right_hip_angle") is not None and 130 > angles["right_hip_angle"] > 120:
+        feedback.append("오른쪽 엉덩이를 더 낮춰보세요.")
+    
+    if angles.get("back_angle") is not None and angles["back_angle"] < 70:
         feedback.append("허리를 너무 숙이지 마세요.")
 
-    # 무릎 간격과 어깨 너비 비교
     knee_to_knee = angles.get("knee_to_knee_distance")
     width = angles.get("shoulder_width")
     if knee_to_knee is not None and width is not None:
@@ -1048,50 +1124,63 @@ def analyze_pose(keypoints: np.ndarray) -> list[str]:
 def check_similar_pose(frame, camera_id=None):
     """
     포즈 감지 및 가장 유사한 포즈 파일명 반환
-    
-    Args:
-        frame: 입력 영상 프레임
-        camera_id: 카메라 ID (front/side 구분용)
-        
-    Returns:
-        원본 프레임 (나중에 시각화 기능 추가 예정)
     """
     global yolo_model, POSE_DATABASE, POSE_FILENAMES
     
-    # 포즈 방향 결정 (카메라ID가 없거나 잘못된 경우 front로 기본 설정)
+    # 포즈 방향 결정
     direction = camera_id if camera_id in ['front', 'side'] else 'front'
     
-    # 프레임에서 포즈 감지
-    results = yolo_model.predict(source=frame, stream=False, verbose=False)
-    
-    # 감지된 사람이 있는지 확인
-    for result in results:
-        if result.keypoints is not None and len(result.keypoints) > 0:
-            # 첫 번째 사람의 키포인트 추출
-            keypoints = result.keypoints.xy[0].cpu().numpy()
-            
-            # 키포인트를 1차원 벡터로 변환 (x1, y1, x2, y2, ...)
-            keypoints_flat = []
-            for kp in keypoints:
-                keypoints_flat.append(float(kp[0]) if not np.isnan(kp[0]) else 0.0)
-                keypoints_flat.append(float(kp[1]) if not np.isnan(kp[1]) else 0.0)
-            
-            # 사용자 포즈 벡터 생성
-            user_pose = np.array(keypoints_flat).reshape(1, -1)
-            
-            # 코사인 유사도 계산
-            similarities = cosine_similarity(user_pose, POSE_DATABASE[direction])
-            
-            # 가장 유사한 포즈 찾기
-            most_similar_index = np.argmax(similarities)
-            # similarity_score = similarities[0, most_similar_index]
-            best_match_filename = POSE_FILENAMES[direction][most_similar_index]
-            
-            # # 결과 출력
-            # print(f"가장 유사한 포즈: {best_match_filename}, 유사도: {similarity_score:.4f}")
-            break  # 첫 번째 사람만 처리
-    
-    return best_match_filename
+    try:
+        # 프레임에서 포즈 감지
+        results = yolo_model.predict(source=frame, stream=False, verbose=False)
+        
+        # 감지된 사람이 있는지 확인
+        for result in results:
+            if result.keypoints is not None and len(result.keypoints) > 0:
+                # 첫 번째 사람의 키포인트 추출
+                keypoints = result.keypoints.xy[0].cpu().numpy()
+                
+                # 유효하지 않은 키포인트 확인
+                if keypoints.size == 0:
+                    return POSE_FILENAMES[direction][0]  # 기본값 반환
+                
+                # 키포인트를 1차원 벡터로 변환
+                keypoints_flat = []
+                for kp in keypoints:
+                    x = float(kp[0]) if not np.isnan(kp[0]) else 0.0
+                    y = float(kp[1]) if not np.isnan(kp[1]) else 0.0
+                    keypoints_flat.extend([x, y])
+                
+                # 모든 값이 0인지 확인
+                if not any(keypoints_flat):
+                    return POSE_FILENAMES[direction][0]  # 기본값 반환
+                
+                # 사용자 포즈 벡터 생성
+                user_pose = np.array(keypoints_flat).reshape(1, -1)
+                
+                # 데이터베이스 크기 확인
+                if POSE_DATABASE[direction].size == 0:
+                    return POSE_FILENAMES[direction][0]  # 기본값 반환
+                
+                # 차원 일치 확인
+                if user_pose.shape[1] != POSE_DATABASE[direction].shape[1]:
+                    print(f"차원 불일치: 사용자 포즈 {user_pose.shape[1]}, DB {POSE_DATABASE[direction].shape[1]}")
+                    return POSE_FILENAMES[direction][0]  # 기본값 반환
+                
+                try:
+                    # 코사인 유사도 계산
+                    similarities = cosine_similarity(user_pose, POSE_DATABASE[direction])
+                    most_similar_index = np.argmax(similarities)
+                    return POSE_FILENAMES[direction][most_similar_index]
+                except Exception as e:
+                    print(f"유사도 계산 오류: {str(e)}")
+                    return POSE_FILENAMES[direction][0]  # 기본값 반환
+                
+        return POSE_FILENAMES[direction][0]  # 포즈가 감지되지 않은 경우 기본값 반환
+        
+    except Exception as e:
+        print(f"포즈 체크 중 오류 발생: {str(e)}")
+        return POSE_FILENAMES[direction][0]  # 오류 발생 시 기본값 반환
 
 # 프레임 후처리 함수
 def post_process_mask(frame, camera_id=None):
@@ -1132,78 +1221,97 @@ def post_process_detect(frame, camera_id=None, threshold_px=20):
     global yolo_model, POSE_DATABASE, POSE_FILENAMES
     
     frame = cv2.flip(frame, 1)
-    # 포즈 방향 결정 (카메라ID가 없거나 잘못된 경우 front로 기본 설정)
     direction = camera_id if camera_id in ['front', 'side'] else 'front'
     result_frame = frame.copy()
     
-    # 프레임에서 포즈 감지
-    results = yolo_model.predict(source=frame, stream=False, verbose=False)
-    
-    # 감지된 사람이 있는지 확인
-    for result in results:
-        if result.keypoints is not None and len(result.keypoints) > 0:
-            # 첫 번째 사람의 키포인트 추출
-            keypoints = result.keypoints.xy[0].cpu().numpy()
+    try:
+        # 프레임에서 포즈 감지
+        results = yolo_model.predict(source=frame, stream=False, verbose=False)
+        
+        # 결과가 비어있는지 확인
+        if not results or len(results) == 0:
+            return result_frame
             
-            # 가장 유사한 포즈 파일명 찾기
-            best_match_filename = check_similar_pose(frame, camera_id=direction)
+        result = results[0]
+        if not hasattr(result, 'keypoints') or result.keypoints is None:
+            return result_frame
             
-            # 기준 포즈 JSON 로드
-            reference_file_path = f'data/squat/{direction}_json/{best_match_filename}'
-            with open(reference_file_path, 'r') as f:
-                reference_data = json.load(f)
+        # keypoints가 비어있는지 확인
+        keypoints_data = result.keypoints.xy
+        if len(keypoints_data) == 0:
+            return result_frame
             
-            # 기준 포즈의 키포인트 추출
-            reference_keypoints = []
-            for kp in reference_data['keypoints']:
-                if kp["x"] is not None and kp["y"] is not None:
-                    reference_keypoints.append([kp["x"], kp["y"]])
-                else:
-                    reference_keypoints.append([None, None])
+        # 첫 번째 사람의 키포인트 추출 시도
+        try:
+            keypoints = keypoints_data[0].cpu().numpy()
+        except IndexError:
+            return result_frame
             
-            # 얼굴 관련 키포인트 인덱스 (YOLO 포맷)
-            # 0: 코, 1-4: 얼굴(왼쪽 눈, 오른쪽 눈, 왼쪽 귀, 오른쪽 귀)
-            # face_keypoints = [1, 2, 3, 4]  # 코(0)는 제외, 표시해야 함
-            core_keypoints = [0, 5, 6, 11, 12, 13, 14, 15, 16]
-            # 거리 계산 및 시각화
-            for i in core_keypoints:
-                # # 얼굴 관련 키포인트는 코를 제외하고 건너뛰기
-                # if i in face_keypoints:
-                #     continue
+        if len(keypoints) == 0:
+            return result_frame
+            
+        # 가장 유사한 포즈 파일명 찾기
+        best_match_filename = check_similar_pose(frame, camera_id=direction)
+        
+        # 기준 포즈 JSON 로드
+        reference_file_path = f'data/squat/{direction}_json/{best_match_filename}'
+        with open(reference_file_path, 'r') as f:
+            reference_data = json.load(f)
+        
+        # 기준 포즈의 키포인트 추출
+        reference_keypoints = []
+        for kp in reference_data['keypoints']:
+            if kp["x"] is not None and kp["y"] is not None:
+                reference_keypoints.append([kp["x"], kp["y"]])
+            else:
+                reference_keypoints.append([None, None])
+        
+        # 얼굴 관련 키포인트 인덱스 (YOLO 포맷)
+        # 0: 코, 1-4: 얼굴(왼쪽 눈, 오른쪽 눈, 왼쪽 귀, 오른쪽 귀)
+        # face_keypoints = [1, 2, 3, 4]  # 코(0)는 제외, 표시해야 함
+        # 중요한 키포인트만 추출
+        core_keypoints = [0, 5, 6, 11, 12, 13, 14, 15, 16]
+        # 거리 계산 및 시각화
+        for i in core_keypoints:
+            # # 얼굴 관련 키포인트는 코를 제외하고 건너뛰기
+            # if i in face_keypoints:
+            #     continue
+                
+            if i < len(reference_keypoints):
+                ref = reference_keypoints[i]
+                cur = keypoints[i]
+                
+                if cur[0] == 0 or cur[1] == 0:
+                    continue
+                
+                # 두 포인트가 모두 유효한 경우에만 계산
+                if ref[0] is not None and cur[0] is not None and not np.isnan(cur[0]) and not np.isnan(cur[1]):
+                    dist = np.linalg.norm(np.array(ref) - np.array(cur))
                     
-                if i < len(reference_keypoints):
-                    ref = reference_keypoints[i]
-                    cur = keypoints[i]
-                    
-                    if cur[0] == 0 or cur[1] == 0:
-                        continue
-                    
-                    # 두 포인트가 모두 유효한 경우에만 계산
-                    if ref[0] is not None and cur[0] is not None and not np.isnan(cur[0]) and not np.isnan(cur[1]):
-                        dist = np.linalg.norm(np.array(ref) - np.array(cur))
-                        
-                        # 거리가 임계값을 초과하면 해당 키포인트 강조 표시
-                        if dist > threshold_px:
-                            # 빨간색 원으로 문제 지점 표시
-                            cv2.circle(result_frame, (int(cur[0]), int(cur[1])), 20, (0, 0, 255), 3)
-                        else:
-                            # 정상 지점은 녹색 원으로 표시
-                            cv2.circle(result_frame, (int(cur[0]), int(cur[1])), 20, (0, 255, 0), 3)
-            
-            feedback = '\n'.join(analyze_pose(keypoints))
-            if feedback:
-                result_frame = put_korean_text(
-                    result_frame, 
-                    f"피드백: {feedback}", 
-                    (10, 30), 
-                    font_size=30, 
-                    color=(0, 0, 255), 
-                    thickness=5
-                )
-            
-            break  # 첫 번째 사람만 처리
-    
-    return result_frame
+                    # 거리가 임계값을 초과하면 해당 키포인트 강조 표시
+                    if dist > threshold_px:
+                        # 빨간색 원으로 문제 지점 표시
+                        cv2.circle(result_frame, (int(cur[0]), int(cur[1])), 20, (0, 0, 255), 3)
+                    else:
+                        # 정상 지점은 녹색 원으로 표시
+                        cv2.circle(result_frame, (int(cur[0]), int(cur[1])), 20, (0, 255, 0), 3)
+        
+        feedback = '\n'.join(analyze_pose(keypoints))
+        if feedback:
+            result_frame = put_korean_text(
+                result_frame, 
+                feedback, 
+                (10, 30), 
+                font_size=40, 
+                color=(0, 0, 255), 
+                thickness=8
+            )
+        
+        return result_frame
+        
+    except Exception as e:
+        print(f"포즈 감지 처리 중 오류: {str(e)}")
+        return result_frame
 
 # 카메라 상태에 따른 프레임 처리 함수
 async def process_frame_by_status(camera_id, frame, timestamp, status, quality=85, max_width=640, flip=False):
