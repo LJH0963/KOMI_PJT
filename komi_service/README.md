@@ -144,12 +144,12 @@ uvicorn komi_service.fastapi_server:app --host 0.0.0.0 --port 8000
 
 ### 2. 웹캠 클라이언트 실행
 ```bash
-python komi_service/webcam_client.py --cameras camera_12346:0 --server "http://localhost:8000" --fps 15 --quality 85 --max-width 640
+python komi_service/webcam_client.py --camera front:0 --server "http://localhost:8000" --fps 15 --quality 85 --max-width 640
 ```
 
 | 옵션 | 설명 | 기본값 |
 |------|------|--------|
-| `--cameras` | "카메라ID:인덱스" 형식으로 연결할 카메라 지정 | 필수 |
+| `--camera` | "카메라ID:인덱스" 형식으로 연결할 카메라 지정 | 필수 |
 | `--server` | 서버 URL | http://localhost:8000 |
 | `--quality` | 이미지 압축 품질 (0-100) | 85 |
 | `--max-width` | 이미지 최대 폭 (픽셀) | 640 |
