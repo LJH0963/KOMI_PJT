@@ -1227,7 +1227,7 @@ def post_process_detect(frame, camera_id=None, threshold_px=20):
     result_frame = frame.copy()
     
     if direction == 'side':
-        threshold_px=25
+        threshold_px=50
     
     try:
         # 프레임에서 포즈 감지
