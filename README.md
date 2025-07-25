@@ -1,7 +1,7 @@
 # KOMI_PJT
 KOMI : Kinematic Optimization & Motion Intelligence
 
-<a href = "https://www.notion.so/Project-3-LLM-1b31d7badadc803da28eecca9b52bd3b?pvs=4"> Team1_notion
+<a href = "https://www.canva.com/design/DAGiKMgcty0/BKc66c8gNKqbPAuz8I96HA/edit?utm_content=DAGiKMgcty0&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton"> 최종발표 자료
 </a>
 
 ## 프로젝트 개요
